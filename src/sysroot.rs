@@ -11,7 +11,16 @@ pub fn build(target_dir: impl AsRef<Path>, triplet: impl AsRef<str>) -> PathBuf 
     let triplet = triplet.as_ref();
 
     let target_spec = match triplet.as_ref() {
-        "x86_64-hyperlight-none" => get_spec("x86_64-unknown-none"),
+        "x86_64-hyperlight-none" => {
+            let mut spec = get_spec("x86_64-unknown-none");
+            spec.entry_name = Some("entrypoint".into());
+            spec.code_model = Some("small".into());
+            spec.linker = Some("rust-lld".into());
+            spec.linker_flavor = Some("gnu-lld".into());
+            spec.pre_link_args =
+                Some([("gnu-lld".to_string(), vec!["-znostart-stop-gc".to_string()])].into());
+            spec
+        }
         _ => panic!("Unsupported target triple: {triplet}"),
     };
 
@@ -56,7 +65,7 @@ pub fn build(target_dir: impl AsRef<Path>, triplet: impl AsRef<str>) -> PathBuf 
         .arg(crate_dir.join("Cargo.toml"))
         .env("RUSTC_BOOTSTRAP", "1")
         .env_remove("RUSTC_WORKSPACE_WRAPPER")
-        .env("RUSTFLAGS", rustflags_sysroot(&sysroot_dir))
+        .env("RUSTFLAGS", rustflags(&sysroot_dir))
         .status()
         .expect("Failed to create sysroot cargo project")
         .success();
@@ -86,18 +95,10 @@ pub fn build(target_dir: impl AsRef<Path>, triplet: impl AsRef<str>) -> PathBuf 
     sysroot_dir
 }
 
-fn rustflags_sysroot(sysroot_dir: impl AsRef<Path>) -> OsString {
+pub fn rustflags(sysroot_dir: impl AsRef<Path>) -> OsString {
     let mut env = std::env::var_os("RUSTFLAGS").unwrap_or_default();
     env.push(" --sysroot=");
     env.push(sysroot_dir.as_ref());
-    env
-}
-
-pub fn rustflags(sysroot_dir: impl AsRef<Path>) -> OsString {
-    let mut env = rustflags_sysroot(sysroot_dir);
-    env.push(" -Ccode-model=small");
-    env.push(" -Clink-arg=-znostart-stop-gc");
-    env.push(" -Clink-arg=--entry=entrypoint");
     env
 }
 
