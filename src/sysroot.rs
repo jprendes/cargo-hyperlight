@@ -96,13 +96,30 @@ fn rustflags_sysroot(sysroot_dir: impl AsRef<Path>) -> OsString {
 pub fn rustflags(sysroot_dir: impl AsRef<Path>) -> OsString {
     let mut env = rustflags_sysroot(sysroot_dir);
     env.push(" -Ccode-model=small");
+    env.push(" -Clink-arg=-znostart-stop-gc");
     env.push(" -Clink-arg=--entry=entrypoint");
     env
 }
 
 fn get_spec(triplet: impl AsRef<str>) -> TargetSpec {
     let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-    let mut rustc = std::process::Command::new(cargo);
-    rustc.arg("rustc").arg("--").env("RUSTC_BOOTSTRAP", "1");
-    target_spec_json::target_spec_json(rustc, triplet.as_ref()).unwrap()
+    let output = std::process::Command::new(cargo)
+        .arg("rustc")
+        .arg("-Zunstable-options")
+        .arg("--print=target-spec-json")
+        .arg("--target")
+        .arg(triplet.as_ref())
+        .arg("--")
+        .arg("-Zunstable-options")
+        .env("RUSTC_BOOTSTRAP", "1")
+        .output()
+        .expect("Failed to get base target spec");
+    assert!(
+        output.status.success(),
+        "Failed to get base target spec: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = String::from_utf8(output.stdout).expect("Failed to parse target spec output");
+    let output = output.trim();
+    serde_json::from_str(output).expect("Failed to parse target spec JSON")
 }
