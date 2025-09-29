@@ -17,7 +17,7 @@ fn main() {
 
     // Execute cargo
     let status = Command::new("cargo")
-        .arg("build")
+        .arg(args.command)
         // Add target triplet
         .arg("--target")
         .arg(&triplet)

@@ -9,6 +9,7 @@ use const_format::formatcp;
 use toml_edit::DocumentMut;
 
 pub struct Args {
+    pub command: &'static str,
     pub manifest_path: PathBuf,
     pub target_dir: PathBuf,
     pub target: String,
@@ -26,8 +27,9 @@ impl Args {
         });
 
         let args = ArgsImpl::parse_from(args);
-        let args = match args.command {
-            Command::Build(args) => args,
+        let (command, args) = match args.command {
+            Command::Build(args) => ("build", args),
+            Command::Clippy(args) => ("clippy", args),
         };
 
         let manifest_path = args
@@ -43,6 +45,7 @@ impl Args {
         let target_dir = cwd.join(target_dir);
 
         Args {
+            command,
             manifest_path: manifest_path,
             target_dir: target_dir,
             target: args.target,
@@ -65,6 +68,9 @@ struct ArgsImpl {
 enum Command {
     /// Build a hyperlight guest binary
     Build(BuildCommand),
+
+    /// Run clippy on a hyperlight guest binary
+    Clippy(BuildCommand),
 }
 
 #[derive(Parser)]
