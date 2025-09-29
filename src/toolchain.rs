@@ -5,6 +5,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use regex::Regex;
+
 use crate::sysroot;
 
 pub fn prepare(
@@ -81,4 +83,29 @@ fn get_cflags(triplet: impl AsRef<str>) -> OsString {
     }
 
     OsString::new()
+}
+
+pub fn find_cc(toolchain: impl AsRef<Path>) -> PathBuf {
+    // check for clang in the toolchain directory
+    let toolchain = toolchain.as_ref();
+    let extension = if cfg!(windows) { "exe" } else { "" };
+    let clang = toolchain.join("clang").with_extension(extension);
+    assert!(clang.exists(), "Could not find clang in {clang:?}");
+    clang
+}
+
+pub fn find_ar() -> PathBuf {
+    if let Ok(path) = which::which("ar") {
+        return path;
+    }
+    if let Ok(path) = which::which("llvm-ar") {
+        return path;
+    }
+    // try with postfixed version llvm-ar, e.g., llvm-ar-20
+    let re = Regex::new(r"llvm-ar-\d+").unwrap();
+    which::which_re(&re)
+        .map(|mut it| it.next())
+        .ok()
+        .flatten()
+        .expect("Could not find 'ar' or 'llvm-ar' in PATH")
 }

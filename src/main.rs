@@ -15,6 +15,9 @@ fn main() {
 
     let triplet = args.target;
 
+    let cc_bin = toolchain::find_cc(&toolchain);
+    let ar_bin = toolchain::find_ar();
+
     // Execute cargo
     let status = Command::new("cargo")
         .arg(args.command)
@@ -36,10 +39,11 @@ fn main() {
         // Set the hyperlight toolchain environment variables
         //.env("HYPERLIGHT_GUEST_TOOLCHAIN_ROOT", &toolchain)
         // Set CC so that cc-rs can pick it up
-        .env(format!("CC_{triplet}"), toolchain.join("clang"))
+        .env(format!("CC_{triplet}"), &cc_bin)
+        .env(format!("AR_{triplet}"), &ar_bin)
         .env(format!("CFLAGS_{triplet}"), toolchain::cflags(&triplet))
         // set CLANG_PATH so that bindgen can pick it up
-        .env("CLANG_PATH", toolchain.join("clang"))
+        .env("CLANG_PATH", &cc_bin)
         .status()
         .expect("Failed to execute cargo");
 
