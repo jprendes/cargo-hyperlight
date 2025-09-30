@@ -4,11 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1.0.100"
 clap = { version = "4.5", features = ["derive"] }
 const_format = "0.2.34"
 regex = "1.11.3"
+serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.143"
 # pin target-spec-json to 0.2.1 as 0.2.3 ist incompatible with older rustc versions
 target-spec-json = "=0.2.1"
-toml_edit = "0.23"
 which = { version = "8", features = ["regex"] }

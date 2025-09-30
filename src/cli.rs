@@ -1,23 +1,28 @@
 use std::env;
 use std::env::consts::ARCH;
 use std::ffi::OsString;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
+use anyhow::{Context, Result, ensure};
 use clap::{Parser, Subcommand};
 use const_format::formatcp;
-use toml_edit::DocumentMut;
+
+use crate::cargo::{CargoCmd as _, cargo};
 
 pub struct Args {
-    pub command: &'static str,
-    pub manifest_path: PathBuf,
+    pub manifest_path: Option<PathBuf>,
     pub target_dir: PathBuf,
     pub target: String,
     pub cargo_args: Vec<OsString>,
 }
 
-impl Args {
-    pub fn parse() -> Args {
+pub enum Command {
+    Build(Args),
+    Clippy(Args),
+}
+
+impl Command {
+    pub fn parse() -> Result<Command> {
         let args = env::args_os().enumerate().filter_map(|(i, arg)| {
             if i == 1 && arg == "hyperlight" {
                 None
@@ -26,30 +31,38 @@ impl Args {
             }
         });
 
-        let args = ArgsImpl::parse_from(args);
-        let (command, args) = match args.command {
-            Command::Build(args) => ("build", args),
-            Command::Clippy(args) => ("clippy", args),
+        let cli = CliImpl::parse_from(args);
+        cli.command.try_into()
+    }
+}
+
+impl TryFrom<ArgsImpl> for Args {
+    type Error = anyhow::Error;
+
+    fn try_from(value: ArgsImpl) -> Result<Self> {
+        let manifest_path = value.manifest_path;
+        let target_dir = match value.target_dir {
+            Some(dir) => dir,
+            None => resolve_target_dir(&manifest_path)?,
         };
-
-        let manifest_path = args
-            .manifest_path
-            .or_else(|| find_cargo_toml())
-            .expect("Error: Could not find Cargo.toml");
-        let target_dir = args
-            .target_dir
-            .unwrap_or_else(|| resolve_target_dir(&manifest_path));
-
-        let cwd = env::current_dir().expect("Failed to get current directory");
-        let manifest_path = cwd.join(manifest_path);
+        let cwd = env::current_dir().context("Failed to get current directory")?;
         let target_dir = cwd.join(target_dir);
 
-        Args {
-            command,
-            manifest_path: manifest_path,
-            target_dir: target_dir,
-            target: args.target,
-            cargo_args: args.cargo_args,
+        Ok(Args {
+            manifest_path,
+            target_dir,
+            target: value.target,
+            cargo_args: value.cargo_args,
+        })
+    }
+}
+
+impl TryFrom<CommandImpl> for Command {
+    type Error = anyhow::Error;
+    fn try_from(value: CommandImpl) -> Result<Self> {
+        match value {
+            CommandImpl::Build(args) => Ok(Command::Build(args.try_into()?)),
+            CommandImpl::Clippy(args) => Ok(Command::Clippy(args.try_into()?)),
         }
     }
 }
@@ -59,28 +72,28 @@ const DEFAULT_TARGET: &str = const { formatcp!("{ARCH}-hyperlight-none") };
 #[derive(Parser)]
 #[command(version, about, trailing_var_arg = true)]
 #[command(propagate_version = true)]
-struct ArgsImpl {
+struct CliImpl {
     #[command(subcommand)]
-    command: Command,
+    command: CommandImpl,
 }
 
 #[derive(Subcommand)]
-enum Command {
+enum CommandImpl {
     /// Build a hyperlight guest binary
-    Build(BuildCommand),
+    Build(ArgsImpl),
 
     /// Run clippy on a hyperlight guest binary
-    Clippy(BuildCommand),
+    Clippy(ArgsImpl),
 }
 
 #[derive(Parser)]
-struct BuildCommand {
+struct ArgsImpl {
     /// Path to Cargo.toml
-    #[arg(long, value_name = "PATH", default_value = "Cargo.toml")]
+    #[arg(long, value_name = "PATH")]
     manifest_path: Option<PathBuf>,
 
     /// Directory for all generated artifacts
-    #[arg(long, value_name = "DIRECTORY", default_value = "target")]
+    #[arg(long, value_name = "DIRECTORY")]
     target_dir: Option<PathBuf>,
 
     /// Target triple to build for
@@ -93,7 +106,7 @@ struct BuildCommand {
 }
 
 #[derive(Subcommand)]
-enum Commands {
+enum BuildCommands {
     /// does testing things
     Test {
         /// lists test values
@@ -102,70 +115,23 @@ enum Commands {
     },
 }
 
-fn find_cargo_toml() -> Option<PathBuf> {
-    let mut current = env::current_dir().ok()?;
-
-    loop {
-        let manifest = current.join("Cargo.toml");
-        if manifest.exists() {
-            return Some(manifest);
-        }
-
-        if !current.pop() {
-            break;
-        }
-    }
-
-    None
+#[derive(serde::Deserialize)]
+struct CargoMetadata {
+    target_directory: PathBuf,
 }
 
-fn resolve_target_dir(manifest_path: &Path) -> PathBuf {
-    // Check CARGO_BUILD_TARGET_DIR
-    if let Some(dir) = env::var_os("CARGO_BUILD_TARGET_DIR") {
-        return dir.into();
-    }
+fn resolve_target_dir(manifest_path: &Option<PathBuf>) -> Result<PathBuf> {
+    let output = cargo("metadata")
+        .manifest_path(manifest_path)
+        .arg("--format-version=1")
+        .arg("--no-deps")
+        .output()
+        .context("Failed to get cargo metadata")?;
 
-    // Check CARGO_TARGET_DIR
-    if let Some(dir) = env::var_os("CARGO_TARGET_DIR") {
-        return dir.into();
-    }
+    ensure!(output.status.success(), "Failed to get cargo metadata");
 
-    // Check .cargo/config.toml
-    if let Some(dir) = read_cargo_config_target_dir(manifest_path) {
-        return dir.into();
-    }
+    let metadata: CargoMetadata =
+        serde_json::from_slice(&output.stdout).context("Failed to parse cargo metadata")?;
 
-    "target".into()
-}
-
-fn read_cargo_config_target_dir(manifest_path: &Path) -> Option<PathBuf> {
-    // Start from the directory containing Cargo.toml
-    let mut current = manifest_path.parent()?.to_path_buf();
-
-    loop {
-        // Check both config.toml and config
-        for config_name in &["config.toml", "config"] {
-            let config_path = current.join(".cargo").join(config_name);
-            if config_path.exists() {
-                if let Ok(contents) = fs::read_to_string(&config_path) {
-                    if let Some(target_dir) = parse_cargo_config(&contents) {
-                        return Some(target_dir);
-                    }
-                }
-            }
-        }
-
-        if !current.pop() {
-            return None;
-        }
-    }
-}
-
-fn parse_cargo_config(contents: &str) -> Option<PathBuf> {
-    let doc = contents.parse::<DocumentMut>().ok()?;
-
-    doc.get("build")
-        .and_then(|build| build.get("target-dir"))
-        .and_then(|value| value.as_str())
-        .map(|s| s.into())
+    Ok(metadata.target_directory)
 }
