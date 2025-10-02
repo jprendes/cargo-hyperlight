@@ -23,6 +23,8 @@ struct CargoMetadataPackage {
 
 pub fn prepare(args: &Args) -> Result<()> {
     let metadata = cargo()
+        .env_clear()
+        .envs(args.env.iter())
         .arg("metadata")
         .manifest_path(&args.manifest_path)
         .arg("--format-version=1")

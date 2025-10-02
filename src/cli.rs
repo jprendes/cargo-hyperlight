@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::env;
 use std::env::consts::ARCH;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, ensure};
@@ -14,6 +14,7 @@ pub struct Args {
     pub manifest_path: Option<PathBuf>,
     pub target_dir: PathBuf,
     pub target: String,
+    pub env: HashMap<OsString, OsString>,
 }
 
 impl Args {
@@ -40,7 +41,7 @@ impl TryFrom<ArgsImpl> for Args {
 
         let target = match value.target {
             Some(triplet) => triplet,
-            None => resolve_target(&manifest_path, &value.env)?,
+            None => resolve_target(&value.env)?,
         };
 
         let cwd = env::current_dir().context("Failed to get current directory")?;
@@ -50,6 +51,7 @@ impl TryFrom<ArgsImpl> for Args {
             manifest_path,
             target_dir,
             target,
+            env: value.env,
         })
     }
 }
@@ -98,17 +100,9 @@ fn resolve_target_dir(
     manifest_path: &Option<PathBuf>,
     env: &HashMap<OsString, OsString>,
 ) -> Result<PathBuf> {
-    let get_env = |key: &str| env.get(OsStr::new(key));
-
-    if let Some(dir) = get_env("CARGO_BUILD_TARGET_DIR").map(PathBuf::from) {
-        return Ok(dir);
-    }
-
-    if let Some(dir) = get_env("CARGO_TARGET_DIR").map(PathBuf::from) {
-        return Ok(dir);
-    }
-
     let output = cargo()
+        .env_clear()
+        .envs(env.iter())
         .arg("metadata")
         .manifest_path(manifest_path)
         .arg("--format-version=1")
@@ -124,35 +118,18 @@ fn resolve_target_dir(
     Ok(metadata.target_directory)
 }
 
-fn resolve_target(
-    manifest_path: &Option<PathBuf>,
-    env: &HashMap<OsString, OsString>,
-) -> Result<String> {
-    let get_env = |key: &str| env.get(OsStr::new(key));
-
-    if let Some(target) = get_env("CARGO_BUILD_TARGET") {
-        return Ok(target.to_string_lossy().into());
-    }
-
-    let manifest_dir = if let Some(manifest_path) = manifest_path {
-        manifest_path
-            .parent()
-            .context("Failed to get parent directory of manifest path")?
-            .to_path_buf()
-    } else {
-        env::current_dir().context("Failed to get current directory")?
-    };
-
+fn resolve_target(env: &HashMap<OsString, OsString>) -> Result<String> {
     let output = cargo()
-        .allow_unstable()
-        .arg("-C")
-        .arg(manifest_dir)
+        .env_clear()
+        .envs(env.iter())
         .arg("config")
         .arg("get")
         .arg("--quiet")
         .arg("--format=json-value")
         .arg("-Zunstable-options")
         .arg("build.target")
+        // cargo config is an unstable feature
+        .allow_unstable()
         .output()
         .context("Failed to get cargo config")?;
 

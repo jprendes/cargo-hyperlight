@@ -40,6 +40,7 @@ pub fn build(args: &Args) -> Result<PathBuf> {
     let triplet_dir = args.triplet_dir();
     let crate_dir = args.crate_dir();
     let lib_dir = args.libs_dir();
+    let build_plan_dir = args.build_plan_dir();
 
     std::fs::create_dir_all(&triplet_dir).context("Failed to create sysroot directories")?;
     std::fs::write(
@@ -49,6 +50,8 @@ pub fn build(args: &Args) -> Result<PathBuf> {
     .context("Failed to write target spec file")?;
 
     let version = cargo()
+        .env_clear()
+        .envs(args.env.iter())
         .arg("version")
         .arg("--verbose")
         .output()
@@ -88,8 +91,9 @@ pub fn build(args: &Args) -> Result<PathBuf> {
     }
 
     // Use cargo build's build plan to get the list of artifacts
-    let build_plan_dir = target_dir.join("build-plan");
     let build_plan = cargo()
+        .env_clear()
+        .envs(args.env.iter())
         .arg("build")
         .arg("--quiet")
         .target(&args.target)
@@ -100,6 +104,7 @@ pub fn build(args: &Args) -> Result<PathBuf> {
         .arg("--release")
         .arg("-Zunstable-options")
         .arg("--build-plan")
+        // build-plan is an unstable feature
         .allow_unstable()
         .env_remove("RUSTC_WORKSPACE_WRAPPER")
         .sysroot(&sysroot_dir)
@@ -141,6 +146,8 @@ pub fn build(args: &Args) -> Result<PathBuf> {
     if should_build {
         // Build the sysroot
         let success = cargo()
+            .env_clear()
+            .envs(args.env.iter())
             .arg("build")
             .target(&args.target)
             .manifest_path(&Some(crate_dir.join("Cargo.toml")))
@@ -148,6 +155,7 @@ pub fn build(args: &Args) -> Result<PathBuf> {
             .arg("-Zbuild-std=core,alloc")
             .arg("-Zbuild-std-features=compiler_builtins/mem")
             .arg("--release")
+            // The core, alloc and compiler_builtins crates use unstable features
             .allow_unstable()
             .env_remove("RUSTC_WORKSPACE_WRAPPER")
             .sysroot(&sysroot_dir)
@@ -194,6 +202,8 @@ pub fn build(args: &Args) -> Result<PathBuf> {
 
 fn get_spec(args: &Args, triplet: impl AsRef<str>) -> Result<TargetSpec> {
     let output = cargo()
+        .env_clear()
+        .envs(args.env.iter())
         .arg("rustc")
         .target(triplet)
         .manifest_path(&args.manifest_path)
@@ -201,6 +211,7 @@ fn get_spec(args: &Args, triplet: impl AsRef<str>) -> Result<TargetSpec> {
         .arg("--print=target-spec-json")
         .arg("--")
         .arg("-Zunstable-options")
+        // printing target-spec-json is an unstable feature
         .allow_unstable()
         .output()
         .context("Failed to get base target spec")?;
