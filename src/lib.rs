@@ -1,57 +1,90 @@
-use anyhow::{Context, Result, ensure};
+use std::collections::HashMap;
+use std::ffi::OsStr;
+use std::{env, iter};
+
+use anyhow::Result;
 
 mod cargo;
 mod cli;
 mod sysroot;
 mod toolchain;
 
-use cargo::{CargoCmd, cargo};
-pub use cli::{Args, Command};
+use cargo::CargoCmd;
+pub use cargo::cargo;
+use cli::Args;
 
-impl Command {
-    pub fn run(&self) -> Result<()> {
-        let (command, args) = match self {
-            cli::Command::Build(args) => ("build", args),
-            cli::Command::Clippy(args) => ("clippy", args),
-        };
+impl Args {
+    pub fn sysroot_dir(&self) -> std::path::PathBuf {
+        self.target_dir.join("sysroot")
+    }
+
+    pub fn triplet_dir(&self) -> std::path::PathBuf {
+        self.sysroot_dir()
+            .join("lib")
+            .join("rustlib")
+            .join(&self.target)
+    }
+
+    pub fn build_dir(&self) -> std::path::PathBuf {
+        self.sysroot_dir().join("target")
+    }
+
+    pub fn libs_dir(&self) -> std::path::PathBuf {
+        self.triplet_dir().join("lib")
+    }
+
+    pub fn includes_dir(&self) -> std::path::PathBuf {
+        self.triplet_dir().join("include")
+    }
+
+    pub fn crate_dir(&self) -> std::path::PathBuf {
+        self.sysroot_dir().join("crate")
+    }
+}
+
+pub trait CargoCommandExt {
+    fn prepare_sysroot(&mut self) -> Result<&mut Self>;
+}
+
+impl CargoCommandExt for std::process::Command {
+    fn prepare_sysroot(&mut self) -> Result<&mut Self> {
+        // skip the cargo subcommand
+        let args = self.get_args().skip(1);
+
+        // but append a fake binary name so that clap can parse the arguments
+        let args = iter::once(OsStr::new("cargo-hyperlight")).chain(args);
+
+        // get the current environment variables and merge them with the command's env
+        let os_env = env::vars_os().collect::<Vec<_>>();
+        let envs = os_env
+            .iter()
+            .map(|(k, v)| (k.as_os_str(), Some(v.as_os_str())))
+            .chain(self.get_envs())
+            .collect::<HashMap<_, _>>()
+            .into_iter()
+            .filter_map(|(k, v)| v.map(|v| (k, v)));
+
+        // parse the arguments and environment variables
+        let args = Args::parse_from(args, envs)?;
 
         // Build sysroot
-        let sysroot = sysroot::build(args)?;
+        let sysroot = sysroot::build(&args)?;
 
         // Build toolchain
-        let toolchain = toolchain::prepare(args)?;
+        toolchain::prepare(&args)?;
 
         let triplet = &args.target;
 
-        let cc_bin = toolchain::find_cc(&toolchain)?;
+        let cc_bin = toolchain::find_cc()?;
         let ar_bin = toolchain::find_ar()?;
 
-        // Execute cargo
-        let status = cargo(command)
-            .target(triplet)
-            .target_dir(&args.target_dir)
-            .manifest_path(&args.manifest_path)
-            // Add remaining arguments
-            .args(&args.cargo_args)
-            // Populate rustflags with sysroot and codegen options
-            .env("RUSTFLAGS", sysroot::rustflags(&sysroot))
-            // Add the toolchain to PATH
-            .env("PATH", toolchain::path_with(&toolchain))
-            // Set the hyperlight toolchain environment variables
-            //.env("HYPERLIGHT_GUEST_TOOLCHAIN_ROOT", &toolchain)
+        // populate the command with the necessary environment variables
+        self.target(triplet)
+            .sysroot(&sysroot)
             .cc_env(triplet, &cc_bin)
             .ar_env(triplet, &ar_bin)
-            .cflags_env(triplet, toolchain::cflags(triplet))
-            .status()
-            .context("Failed to execute cargo")?;
+            .append_cflags(triplet, toolchain::cflags(&args));
 
-        // Check exit status
-        ensure!(
-            status.success(),
-            "Cargo exited with non-zero status: {}",
-            status
-        );
-
-        Ok(())
+        Ok(self)
     }
 }

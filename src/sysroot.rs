@@ -1,19 +1,23 @@
-use std::ffi::OsString;
 use std::ops::Not as _;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail, ensure};
 use target_spec_json::TargetSpec;
 
-use crate::cargo::{CargoCmd, cargo};
+use crate::cargo::{CargoCmd, CargoCmdExt, cargo};
 use crate::cli::Args;
 
 const CARGO_TOML: &str = include_str!("dummy/_Cargo.toml");
 const LIB_RS: &str = include_str!("dummy/_lib.rs");
 
 #[derive(serde::Deserialize)]
-struct CargoCheck {
-    filenames: Vec<PathBuf>,
+struct Invocation {
+    outputs: Vec<PathBuf>,
+}
+
+#[derive(serde::Deserialize)]
+struct BuildPlan {
+    invocations: Vec<Invocation>,
 }
 
 pub fn build(args: &Args) -> Result<PathBuf> {
@@ -31,10 +35,11 @@ pub fn build(args: &Args) -> Result<PathBuf> {
         triplet => bail!("Unsupported target triple: {triplet}"),
     };
 
-    let sysroot_dir = args.target_dir.join("sysroot");
-    let target_dir = sysroot_dir.join("target");
-    let triplet_dir = sysroot_dir.join("lib").join("rustlib").join(&args.target);
-    let crate_dir = sysroot_dir.join("crate");
+    let sysroot_dir = args.sysroot_dir();
+    let target_dir = args.build_dir();
+    let triplet_dir = args.triplet_dir();
+    let crate_dir = args.crate_dir();
+    let lib_dir = args.libs_dir();
 
     std::fs::create_dir_all(&triplet_dir).context("Failed to create sysroot directories")?;
     std::fs::write(
@@ -43,77 +48,116 @@ pub fn build(args: &Args) -> Result<PathBuf> {
     )
     .context("Failed to write target spec file")?;
 
+    let version = cargo()
+        .arg("version")
+        .arg("--verbose")
+        .output()
+        .context("Failed to get cargo version")?;
+
+    ensure!(version.status.success(), "Failed to get cargo version");
+    let version = String::from_utf8_lossy(&version.stdout);
+    let version = version
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("release: "))
+        .context("Failed to parse cargo version")?;
+
+    let cargo_toml = CARGO_TOML.replace("0.0.0", version);
+
     std::fs::create_dir_all(&crate_dir).context("Failed to create target directory")?;
-    std::fs::write(crate_dir.join("Cargo.toml"), CARGO_TOML)
+    std::fs::write(crate_dir.join("Cargo.toml"), cargo_toml)
         .context("Failed to write Cargo.toml")?;
     std::fs::write(crate_dir.join("lib.rs"), LIB_RS).context("Failed to write lib.rs")?;
 
     // if we are using rustup, ensure that the rust-src component is installed
     if let Some(rustup_toolchain) = std::env::var_os("RUSTUP_TOOLCHAIN") {
-        let _ = std::process::Command::new("rustup")
+        let output = std::process::Command::new("rustup")
+            .arg("--quiet")
             .arg("component")
             .arg("add")
             .arg("rust-src")
             .arg("--toolchain")
             .arg(rustup_toolchain)
-            .status();
+            .output()
+            .context("Failed to get Rust's std lib sources")?;
+
+        ensure!(
+            output.status.success(),
+            "Failed to get Rust's std lib sources: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
-    // Build the sysroot
-    let success = cargo("rustc")
-        .target(&args.target)
-        .manifest_path(&Some(crate_dir.join("Cargo.toml")))
-        .target_dir(&target_dir)
-        .arg("-Zbuild-std=core,alloc")
-        .arg("-Zbuild-std-features=compiler_builtins/mem")
-        .arg("--release")
-        .env("RUSTC_BOOTSTRAP", "1")
-        .env_remove("RUSTC_WORKSPACE_WRAPPER")
-        .env("RUSTFLAGS", rustflags(&sysroot_dir))
-        .status()
-        .context("Failed to create sysroot cargo project")?
-        .success();
-
-    ensure!(success, "Failed to build sysroot");
-
-    // Use cargo check to get the list of artifacts
-    let metadata = cargo("check")
-        .arg("--message-format=json-render-diagnostics")
+    // Use cargo build's build plan to get the list of artifacts
+    let build_plan_dir = target_dir.join("build-plan");
+    let build_plan = cargo()
+        .arg("build")
         .arg("--quiet")
         .target(&args.target)
         .manifest_path(&Some(crate_dir.join("Cargo.toml")))
-        .target_dir(&target_dir)
+        .target_dir(&build_plan_dir)
         .arg("-Zbuild-std=core,alloc")
         .arg("-Zbuild-std-features=compiler_builtins/mem")
         .arg("--release")
-        .env("RUSTC_BOOTSTRAP", "1")
+        .arg("-Zunstable-options")
+        .arg("--build-plan")
+        .allow_unstable()
         .env_remove("RUSTC_WORKSPACE_WRAPPER")
-        .env("RUSTFLAGS", rustflags(&sysroot_dir))
+        .sysroot(&sysroot_dir)
         .output()
         .context("Failed to create sysroot cargo project")?;
 
-    ensure!(metadata.status.success(), "Failed to build sysroot");
+    ensure!(build_plan.status.success(), "Failed to build sysroot");
 
-    let metadata = String::from_utf8_lossy(&metadata.stdout);
+    let build_plan = String::from_utf8_lossy(&build_plan.stdout);
     let mut artifacts = vec![];
-    for line in metadata.lines() {
-        let Ok(metadata) = serde_json::from_str::<CargoCheck>(line) else {
+    for line in build_plan.lines() {
+        let Ok(step) = serde_json::from_str::<BuildPlan>(line) else {
             continue;
         };
-        artifacts.extend(metadata.filenames.into_iter().filter_map(|f| {
-            let filename = f.file_name()?.to_str()?;
-            let (stem, ext) = filename.rsplit_once('.')?;
-            let (stem, _) = stem.split_once('-')?;
-            // skip libsysroot as they are for our empty dummy crate
-            if stem != "libsysroot" && (ext == "rlib" || ext == "rmeta") {
-                Some(f)
-            } else {
-                None
-            }
-        }));
+        artifacts.extend(
+            step.invocations
+                .into_iter()
+                .flat_map(|i| i.outputs)
+                .filter_map(|f| {
+                    let Ok(f) = f.strip_prefix(&build_plan_dir) else {
+                        return None;
+                    };
+                    let filename = f.file_name()?.to_str()?;
+                    let (stem, ext) = filename.rsplit_once('.')?;
+                    let (stem, _) = stem.split_once('-')?;
+                    // skip libsysroot as they are for our empty dummy crate
+                    if stem != "libsysroot" && (ext == "rlib" || ext == "rmeta") {
+                        Some(target_dir.join(f))
+                    } else {
+                        None
+                    }
+                }),
+        );
     }
 
-    let lib_dir = triplet_dir.join("lib");
+    // check if any artifacts is missing
+    let should_build = artifacts.iter().any(|f| !f.exists());
+
+    if should_build {
+        // Build the sysroot
+        let success = cargo()
+            .arg("build")
+            .target(&args.target)
+            .manifest_path(&Some(crate_dir.join("Cargo.toml")))
+            .target_dir(&target_dir)
+            .arg("-Zbuild-std=core,alloc")
+            .arg("-Zbuild-std-features=compiler_builtins/mem")
+            .arg("--release")
+            .allow_unstable()
+            .env_remove("RUSTC_WORKSPACE_WRAPPER")
+            .sysroot(&sysroot_dir)
+            .status()
+            .context("Failed to create sysroot cargo project")?
+            .success();
+
+        ensure!(success, "Failed to build sysroot");
+    }
+
     std::fs::create_dir_all(&lib_dir).context("Failed to create sysroot lib directory")?;
 
     // Find any old artifacts in the sysroot lib directory
@@ -148,22 +192,16 @@ pub fn build(args: &Args) -> Result<PathBuf> {
     Ok(sysroot_dir)
 }
 
-pub fn rustflags(sysroot_dir: impl AsRef<Path>) -> OsString {
-    let mut env = std::env::var_os("RUSTFLAGS").unwrap_or_default();
-    env.push(" --sysroot=");
-    env.push(sysroot_dir.as_ref());
-    env
-}
-
 fn get_spec(args: &Args, triplet: impl AsRef<str>) -> Result<TargetSpec> {
-    let output = cargo("rustc")
+    let output = cargo()
+        .arg("rustc")
         .target(triplet)
         .manifest_path(&args.manifest_path)
         .arg("-Zunstable-options")
         .arg("--print=target-spec-json")
         .arg("--")
         .arg("-Zunstable-options")
-        .env("RUSTC_BOOTSTRAP", "1")
+        .allow_unstable()
         .output()
         .context("Failed to get base target spec")?;
     ensure!(

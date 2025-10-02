@@ -1,38 +1,29 @@
+use std::collections::HashMap;
 use std::env;
 use std::env::consts::ARCH;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, ensure};
 use clap::{Parser, Subcommand};
 use const_format::formatcp;
 
-use crate::cargo::{CargoCmd as _, cargo};
+use crate::cargo::{CargoCmd as _, CargoCmdExt, cargo};
 
 pub struct Args {
     pub manifest_path: Option<PathBuf>,
     pub target_dir: PathBuf,
     pub target: String,
-    pub cargo_args: Vec<OsString>,
 }
 
-pub enum Command {
-    Build(Args),
-    Clippy(Args),
-}
-
-impl Command {
-    pub fn parse() -> Result<Command> {
-        let args = env::args_os().enumerate().filter_map(|(i, arg)| {
-            if i == 1 && arg == "hyperlight" {
-                None
-            } else {
-                Some(arg)
-            }
-        });
-
-        let cli = CliImpl::parse_from(args);
-        cli.command.try_into()
+impl Args {
+    pub fn parse_from(
+        args: impl IntoIterator<Item = impl Into<OsString> + Clone>,
+        env: impl IntoIterator<Item = (impl Into<OsString>, impl Into<OsString>)>,
+    ) -> Result<Args> {
+        let mut args = ArgsImpl::parse_from(args);
+        args.env = env.into_iter().map(|(k, v)| (k.into(), v.into())).collect();
+        args.try_into()
     }
 }
 
@@ -41,52 +32,32 @@ impl TryFrom<ArgsImpl> for Args {
 
     fn try_from(value: ArgsImpl) -> Result<Self> {
         let manifest_path = value.manifest_path;
+
         let target_dir = match value.target_dir {
             Some(dir) => dir,
-            None => resolve_target_dir(&manifest_path)?,
+            None => resolve_target_dir(&manifest_path, &value.env)?,
         };
+
+        let target = match value.target {
+            Some(triplet) => triplet,
+            None => resolve_target(&manifest_path, &value.env)?,
+        };
+
         let cwd = env::current_dir().context("Failed to get current directory")?;
         let target_dir = cwd.join(target_dir);
 
         Ok(Args {
             manifest_path,
             target_dir,
-            target: value.target,
-            cargo_args: value.cargo_args,
+            target,
         })
-    }
-}
-
-impl TryFrom<CommandImpl> for Command {
-    type Error = anyhow::Error;
-    fn try_from(value: CommandImpl) -> Result<Self> {
-        match value {
-            CommandImpl::Build(args) => Ok(Command::Build(args.try_into()?)),
-            CommandImpl::Clippy(args) => Ok(Command::Clippy(args.try_into()?)),
-        }
     }
 }
 
 const DEFAULT_TARGET: &str = const { formatcp!("{ARCH}-hyperlight-none") };
 
 #[derive(Parser)]
-#[command(version, about, trailing_var_arg = true)]
-#[command(propagate_version = true)]
-struct CliImpl {
-    #[command(subcommand)]
-    command: CommandImpl,
-}
-
-#[derive(Subcommand)]
-enum CommandImpl {
-    /// Build a hyperlight guest binary
-    Build(ArgsImpl),
-
-    /// Run clippy on a hyperlight guest binary
-    Clippy(ArgsImpl),
-}
-
-#[derive(Parser)]
+#[command(disable_help_subcommand = true)]
 struct ArgsImpl {
     /// Path to Cargo.toml
     #[arg(long, value_name = "PATH")]
@@ -97,12 +68,15 @@ struct ArgsImpl {
     target_dir: Option<PathBuf>,
 
     /// Target triple to build for
-    #[arg(long, value_name = "TRIPLE", default_value = DEFAULT_TARGET)]
-    target: String,
+    #[arg(long, value_name = "TRIPLE")]
+    target: Option<String>,
 
     /// Arguments to pass to cargo
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     cargo_args: Vec<OsString>,
+
+    #[arg(skip)]
+    env: HashMap<OsString, OsString>,
 }
 
 #[derive(Subcommand)]
@@ -120,8 +94,22 @@ struct CargoMetadata {
     target_directory: PathBuf,
 }
 
-fn resolve_target_dir(manifest_path: &Option<PathBuf>) -> Result<PathBuf> {
-    let output = cargo("metadata")
+fn resolve_target_dir(
+    manifest_path: &Option<PathBuf>,
+    env: &HashMap<OsString, OsString>,
+) -> Result<PathBuf> {
+    let get_env = |key: &str| env.get(OsStr::new(key));
+
+    if let Some(dir) = get_env("CARGO_BUILD_TARGET_DIR").map(PathBuf::from) {
+        return Ok(dir);
+    }
+
+    if let Some(dir) = get_env("CARGO_TARGET_DIR").map(PathBuf::from) {
+        return Ok(dir);
+    }
+
+    let output = cargo()
+        .arg("metadata")
         .manifest_path(manifest_path)
         .arg("--format-version=1")
         .arg("--no-deps")
@@ -134,4 +122,47 @@ fn resolve_target_dir(manifest_path: &Option<PathBuf>) -> Result<PathBuf> {
         serde_json::from_slice(&output.stdout).context("Failed to parse cargo metadata")?;
 
     Ok(metadata.target_directory)
+}
+
+fn resolve_target(
+    manifest_path: &Option<PathBuf>,
+    env: &HashMap<OsString, OsString>,
+) -> Result<String> {
+    let get_env = |key: &str| env.get(OsStr::new(key));
+
+    if let Some(target) = get_env("CARGO_BUILD_TARGET") {
+        return Ok(target.to_string_lossy().into());
+    }
+
+    let manifest_dir = if let Some(manifest_path) = manifest_path {
+        manifest_path
+            .parent()
+            .context("Failed to get parent directory of manifest path")?
+            .to_path_buf()
+    } else {
+        env::current_dir().context("Failed to get current directory")?
+    };
+
+    let output = cargo()
+        .allow_unstable()
+        .arg("-C")
+        .arg(manifest_dir)
+        .arg("config")
+        .arg("get")
+        .arg("--quiet")
+        .arg("--format=json-value")
+        .arg("-Zunstable-options")
+        .arg("build.target")
+        .output()
+        .context("Failed to get cargo config")?;
+
+    let target = String::from_utf8_lossy(&output.stdout);
+    let target = target.trim();
+    let target = target.trim_matches(|c| c == '"' || c == '\'');
+
+    if target.is_empty() {
+        Ok(DEFAULT_TARGET.into())
+    } else {
+        Ok(target.into())
+    }
 }
