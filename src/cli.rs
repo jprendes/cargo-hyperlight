@@ -4,11 +4,11 @@ use std::env::consts::ARCH;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use const_format::formatcp;
 
-use crate::cargo::{CargoCmd as _, CargoCmdExt, cargo};
+use crate::cargo::{CargoCmd as _, cargo};
 
 pub struct Args {
     pub manifest_path: Option<PathBuf>,
@@ -107,10 +107,8 @@ fn resolve_target_dir(
         .manifest_path(manifest_path)
         .arg("--format-version=1")
         .arg("--no-deps")
-        .output()
+        .checked_output()
         .context("Failed to get cargo metadata")?;
-
-    ensure!(output.status.success(), "Failed to get cargo metadata");
 
     let metadata: CargoMetadata =
         serde_json::from_slice(&output.stdout).context("Failed to parse cargo metadata")?;
@@ -130,6 +128,8 @@ fn resolve_target(env: &HashMap<OsString, OsString>) -> Result<String> {
         .arg("build.target")
         // cargo config is an unstable feature
         .allow_unstable()
+        // use output instead of checked_output
+        // as cargo will error if build.target is not set
         .output()
         .context("Failed to get cargo config")?;
 

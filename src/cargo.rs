@@ -1,5 +1,9 @@
+use std::env;
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
+use std::process::{Command, Stdio};
+
+use anyhow::{Result, bail};
 
 pub trait CargoCmd {
     fn manifest_path(&mut self, path: &Option<impl AsRef<Path>>) -> &mut Self;
@@ -11,18 +15,27 @@ pub trait CargoCmd {
     fn append_rustflags(&mut self, flags: impl AsRef<OsStr>) -> &mut Self;
     fn append_cflags(&mut self, triplet: impl AsRef<str>, flags: impl AsRef<OsStr>) -> &mut Self;
     fn append_bindgen_cflags(&mut self, flags: impl AsRef<OsStr>) -> &mut Self;
-}
-
-pub trait CargoCmdExt {
     fn allow_unstable(&mut self) -> &mut Self;
+    fn checked_output(&mut self) -> Result<CheckedOutput>;
+    fn checked_status(&mut self) -> Result<()>;
 }
 
-pub fn cargo() -> std::process::Command {
-    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-    std::process::Command::new(cargo)
+pub fn cargo() -> Command {
+    let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let mut cmd = Command::new(cargo);
+    if let Some(rustup_toolchain) = env::var_os("RUSTUP_TOOLCHAIN") {
+        cmd.env("RUSTUP_TOOLCHAIN", rustup_toolchain);
+    }
+    cmd
 }
 
-impl CargoCmd for std::process::Command {
+pub struct CheckedOutput {
+    pub stdout: Vec<u8>,
+    #[allow(dead_code)]
+    pub stderr: Vec<u8>,
+}
+
+impl CargoCmd for Command {
     fn manifest_path(&mut self, path: &Option<impl AsRef<Path>>) -> &mut Self {
         if let Some(path) = path {
             self.arg("--manifest-path").arg(path.as_ref());
@@ -122,18 +135,44 @@ impl CargoCmd for std::process::Command {
         self.env("BINDGEN_EXTRA_CLANG_ARGS", new_flags);
         self
     }
+
+    fn allow_unstable(&mut self) -> &mut Self {
+        self.env("RUSTC_BOOTSTRAP", "1")
+    }
+
+    fn checked_output(&mut self) -> Result<CheckedOutput> {
+        let output = self.output();
+
+        let Ok(output) = output else {
+            bail!("Failed to execute command:\n{:?}", self);
+        };
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if let Some(code) = output.status.code() {
+                bail!("Command exited with code {code}:\n{self:?}\n{stderr}");
+            } else {
+                bail!("Command terminated by signal:\n{self:?}\n{stderr}");
+            }
+        }
+
+        Ok(CheckedOutput {
+            stdout: output.stdout,
+            stderr: output.stderr,
+        })
+    }
+
+    fn checked_status(&mut self) -> Result<()> {
+        self.stderr(Stdio::inherit());
+        self.stdout(Stdio::inherit());
+        let _ = self.checked_output()?;
+        Ok(())
+    }
 }
 
-fn get_env(cmd: &std::process::Command, key: &str) -> Option<OsString> {
+fn get_env(cmd: &Command, key: &str) -> Option<OsString> {
     let mut envs = cmd.get_envs();
     match envs.find(|(k, _)| *k == key) {
         Some((_, v)) => v.map(ToOwned::to_owned),
         None => std::env::var_os(key),
-    }
-}
-
-impl CargoCmdExt for std::process::Command {
-    fn allow_unstable(&mut self) -> &mut Self {
-        self.env("RUSTC_BOOTSTRAP", "1")
     }
 }

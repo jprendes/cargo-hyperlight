@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail, ensure};
 use target_spec_json::TargetSpec;
 
-use crate::cargo::{CargoCmd, CargoCmdExt, cargo};
+use crate::cargo::{CargoCmd, cargo};
 use crate::cli::Args;
 
 const CARGO_TOML: &str = include_str!("dummy/_Cargo.toml");
@@ -54,10 +54,9 @@ pub fn build(args: &Args) -> Result<PathBuf> {
         .envs(args.env.iter())
         .arg("version")
         .arg("--verbose")
-        .output()
+        .checked_output()
         .context("Failed to get cargo version")?;
 
-    ensure!(version.status.success(), "Failed to get cargo version");
     let version = String::from_utf8_lossy(&version.stdout);
     let version = version
         .lines()
@@ -73,21 +72,15 @@ pub fn build(args: &Args) -> Result<PathBuf> {
 
     // if we are using rustup, ensure that the rust-src component is installed
     if let Some(rustup_toolchain) = std::env::var_os("RUSTUP_TOOLCHAIN") {
-        let output = std::process::Command::new("rustup")
+        std::process::Command::new("rustup")
             .arg("--quiet")
             .arg("component")
             .arg("add")
             .arg("rust-src")
             .arg("--toolchain")
             .arg(rustup_toolchain)
-            .output()
+            .checked_output()
             .context("Failed to get Rust's std lib sources")?;
-
-        ensure!(
-            output.status.success(),
-            "Failed to get Rust's std lib sources: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
     }
 
     // Use cargo build's build plan to get the list of artifacts
@@ -108,10 +101,8 @@ pub fn build(args: &Args) -> Result<PathBuf> {
         .allow_unstable()
         .env_remove("RUSTC_WORKSPACE_WRAPPER")
         .sysroot(&sysroot_dir)
-        .output()
-        .context("Failed to create sysroot cargo project")?;
-
-    ensure!(build_plan.status.success(), "Failed to build sysroot");
+        .checked_output()
+        .context("Failed to build sysroot")?;
 
     let build_plan = String::from_utf8_lossy(&build_plan.stdout);
     let mut artifacts = vec![];
@@ -213,12 +204,8 @@ fn get_spec(args: &Args, triplet: impl AsRef<str>) -> Result<TargetSpec> {
         .arg("-Zunstable-options")
         // printing target-spec-json is an unstable feature
         .allow_unstable()
-        .output()
+        .checked_output()
         .context("Failed to get base target spec")?;
-    ensure!(
-        output.status.success(),
-        "Failed to get base target spec: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+
     serde_json::from_slice(&output.stdout).context("Failed to parse target spec JSON")
 }

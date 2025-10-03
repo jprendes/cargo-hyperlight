@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use regex::Regex;
 
 use crate::cargo::{CargoCmd, cargo};
@@ -28,10 +28,8 @@ pub fn prepare(args: &Args) -> Result<()> {
         .arg("metadata")
         .manifest_path(&args.manifest_path)
         .arg("--format-version=1")
-        .output()
+        .checked_output()
         .context("Failed to get cargo metadata")?;
-
-    ensure!(metadata.status.success(), "Failed to get cargo metadata");
 
     let metadata = serde_json::from_slice::<CargoMetadata>(&metadata.stdout)
         .context("Failed to parse cargo metadata")?;

@@ -1,17 +1,18 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
-use std::{env, iter};
+use std::iter;
 
 use anyhow::Result;
 
 mod cargo;
 mod cli;
+mod command;
 mod sysroot;
 mod toolchain;
 
 use cargo::CargoCmd;
-pub use cargo::cargo;
 use cli::Args;
+pub use command::CargoCommand;
 
 impl Args {
     pub fn sysroot_dir(&self) -> std::path::PathBuf {
@@ -46,12 +47,18 @@ impl Args {
     }
 }
 
-pub trait CargoCommandExt {
-    fn prepare_sysroot(&mut self) -> Result<&mut Self>;
+trait CargoCommandExt {
+    fn prepare_sysroot(
+        &mut self,
+        envs: impl IntoIterator<Item = (impl AsRef<OsStr>, impl AsRef<OsStr>)>,
+    ) -> Result<&mut Self>;
 }
 
 impl CargoCommandExt for std::process::Command {
-    fn prepare_sysroot(&mut self) -> Result<&mut Self> {
+    fn prepare_sysroot(
+        &mut self,
+        envs: impl IntoIterator<Item = (impl AsRef<OsStr>, impl AsRef<OsStr>)>,
+    ) -> Result<&mut Self> {
         // skip the cargo subcommand
         let args = self.get_args().skip(1);
 
@@ -59,10 +66,10 @@ impl CargoCommandExt for std::process::Command {
         let args = iter::once(OsStr::new("cargo-hyperlight")).chain(args);
 
         // get the current environment variables and merge them with the command's env
-        let os_env = env::vars_os().collect::<Vec<_>>();
-        let envs = os_env
+        let envs = envs.into_iter().collect::<Vec<_>>();
+        let envs = envs
             .iter()
-            .map(|(k, v)| (k.as_os_str(), Some(v.as_os_str())))
+            .map(|(k, v)| (k.as_ref(), Some(v.as_ref())))
             .chain(self.get_envs())
             .collect::<HashMap<_, _>>()
             .into_iter()

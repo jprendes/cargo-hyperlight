@@ -81,6 +81,7 @@ dependencies = [
  "clap",
  "const_format",
  "glob",
+ "libc",
  "regex",
  "semver",
  "serde",
