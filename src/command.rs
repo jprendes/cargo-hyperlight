@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::env::VarsOs;
 use std::ffi::{OsStr, OsString, c_char};
 use std::fmt::Debug;
 use std::path::Path;
@@ -87,17 +88,24 @@ impl CargoCommand {
         self.command.get_envs()
     }
 
+    fn base_env(&self) -> VarsOs {
+        let mut env = env::vars_os();
+        if self.clear_env {
+            env.find(|_| false);
+        }
+        env
+    }
+
+    fn resolve_envs(&self) -> HashMap<OsString, OsString> {
+        self.command.resolve_env(self.base_env())
+    }
+
     pub fn get_program(&self) -> &OsStr {
         self.command.get_program()
     }
 
     fn prepare_sysroot(&mut self) -> anyhow::Result<()> {
-        if self.clear_env {
-            self.command
-                .prepare_sysroot(Option::<(OsString, OsString)>::None)?;
-        } else {
-            self.command.prepare_sysroot(env::vars_os())?;
-        };
+        self.command.prepare_sysroot(self.base_env())?;
         Ok(())
     }
 
@@ -110,7 +118,7 @@ impl CargoCommand {
             .context("Failed to execute cargo")
     }
 
-    pub fn exec(&mut self) -> anyhow::Result<()> {
+    pub fn exec(&mut self) -> ! {
         match self.exec_impl() {
             Err(e) => {
                 eprintln!("{e:?}");
@@ -123,23 +131,11 @@ impl CargoCommand {
         self.prepare_sysroot()
             .context("Failed to prepare sysroot")?;
 
-        let envs = if self.clear_env {
-            HashMap::new()
-        } else {
-            env::vars_os()
-                .map(|(k, v)| (k.to_os_string(), v.to_os_string()))
-                .collect()
-        };
-
-        let envs = envs
-            .iter()
-            .map(|(k, v)| (k.as_ref(), Some(v.as_ref())))
-            .chain(self.get_envs())
-            .collect::<HashMap<_, _>>()
-            .into_iter()
-            .filter_map(|(k, v)| v.map(|v| (k, v)));
-
-        Ok(exec(self.get_program(), self.get_args(), envs)?)
+        Ok(exec(
+            self.get_program(),
+            self.get_args(),
+            self.resolve_envs(),
+        )?)
     }
 }
 

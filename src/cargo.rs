@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
@@ -16,6 +17,10 @@ pub trait CargoCmd {
     fn append_cflags(&mut self, triplet: impl AsRef<str>, flags: impl AsRef<OsStr>) -> &mut Self;
     fn append_bindgen_cflags(&mut self, flags: impl AsRef<OsStr>) -> &mut Self;
     fn allow_unstable(&mut self) -> &mut Self;
+    fn resolve_env(
+        &self,
+        base: impl IntoIterator<Item = (impl AsRef<OsStr>, impl AsRef<OsStr>)>,
+    ) -> HashMap<OsString, OsString>;
     fn checked_output(&mut self) -> Result<CheckedOutput>;
     fn checked_status(&mut self) -> Result<()>;
 }
@@ -138,6 +143,26 @@ impl CargoCmd for Command {
 
     fn allow_unstable(&mut self) -> &mut Self {
         self.env("RUSTC_BOOTSTRAP", "1")
+    }
+
+    fn resolve_env(
+        &self,
+        base: impl IntoIterator<Item = (impl AsRef<OsStr>, impl AsRef<OsStr>)>,
+    ) -> HashMap<OsString, OsString> {
+        let mut envs = base
+            .into_iter()
+            .map(|(k, v)| (k.as_ref().to_owned(), v.as_ref().to_owned()))
+            .collect::<HashMap<_, _>>();
+
+        for (k, v) in self.get_envs() {
+            if let Some(v) = v {
+                envs.insert(k.to_owned(), v.to_owned());
+            } else {
+                envs.remove(k);
+            }
+        }
+
+        envs
     }
 
     fn checked_output(&mut self) -> Result<CheckedOutput> {
