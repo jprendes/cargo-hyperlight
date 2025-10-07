@@ -76,7 +76,7 @@ impl CargoCommandExt for std::process::Command {
             .filter_map(|(k, v)| v.map(|v| (k, v)));
 
         // parse the arguments and environment variables
-        let args = Args::parse_from(args, envs)?;
+        let args = Args::parse_from(args, envs, self.get_current_dir())?;
 
         // Build sysroot
         let sysroot = sysroot::build(&args)?;

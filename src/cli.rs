@@ -15,15 +15,21 @@ pub struct Args {
     pub target_dir: PathBuf,
     pub target: String,
     pub env: HashMap<OsString, OsString>,
+    pub current_dir: PathBuf,
 }
 
 impl Args {
     pub fn parse_from(
         args: impl IntoIterator<Item = impl Into<OsString> + Clone>,
         env: impl IntoIterator<Item = (impl Into<OsString>, impl Into<OsString>)>,
+        cwd: Option<impl Into<PathBuf>>,
     ) -> Result<Args> {
         let mut args = ArgsImpl::parse_from(args);
         args.env = env.into_iter().map(|(k, v)| (k.into(), v.into())).collect();
+        args.current_dir = match cwd {
+            Some(cwd) => cwd.into(),
+            None => env::current_dir().context("Failed to get current directory")?,
+        };
         args.try_into()
     }
 }
@@ -36,12 +42,12 @@ impl TryFrom<ArgsImpl> for Args {
 
         let target_dir = match value.target_dir {
             Some(dir) => dir,
-            None => resolve_target_dir(&manifest_path, &value.env)?,
+            None => resolve_target_dir(&manifest_path, &value.env, &value.current_dir)?,
         };
 
         let target = match value.target {
             Some(triplet) => triplet,
-            None => resolve_target(&value.env)?,
+            None => resolve_target(&value.env, &value.current_dir)?,
         };
 
         let cwd = env::current_dir().context("Failed to get current directory")?;
@@ -52,6 +58,7 @@ impl TryFrom<ArgsImpl> for Args {
             target_dir,
             target,
             env: value.env,
+            current_dir: value.current_dir,
         })
     }
 }
@@ -79,6 +86,9 @@ struct ArgsImpl {
 
     #[arg(skip)]
     env: HashMap<OsString, OsString>,
+
+    #[arg(skip)]
+    pub current_dir: PathBuf,
 }
 
 #[derive(Subcommand)]
@@ -99,10 +109,12 @@ struct CargoMetadata {
 fn resolve_target_dir(
     manifest_path: &Option<PathBuf>,
     env: &HashMap<OsString, OsString>,
+    cwd: &PathBuf,
 ) -> Result<PathBuf> {
     let output = cargo()
         .env_clear()
         .envs(env.iter())
+        .current_dir(cwd)
         .arg("metadata")
         .manifest_path(manifest_path)
         .arg("--format-version=1")
@@ -116,10 +128,11 @@ fn resolve_target_dir(
     Ok(metadata.target_directory)
 }
 
-fn resolve_target(env: &HashMap<OsString, OsString>) -> Result<String> {
+fn resolve_target(env: &HashMap<OsString, OsString>, cwd: &PathBuf) -> Result<String> {
     let output = cargo()
         .env_clear()
         .envs(env.iter())
+        .current_dir(cwd)
         .arg("config")
         .arg("get")
         .arg("--quiet")
