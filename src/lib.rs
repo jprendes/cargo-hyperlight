@@ -1,7 +1,3 @@
-use std::collections::HashMap;
-use std::ffi::OsStr;
-use std::iter;
-
 use anyhow::Result;
 
 mod cargo_cmd;
@@ -80,54 +76,40 @@ impl Args {
 }
 
 trait CargoCommandExt {
-    fn prepare_sysroot(
-        &mut self,
-        envs: impl IntoIterator<Item = (impl AsRef<OsStr>, impl AsRef<OsStr>)>,
-    ) -> Result<&mut Self>;
+    fn populate_from_args(&mut self, args: &Args) -> &mut Self;
 }
 
 impl CargoCommandExt for std::process::Command {
-    fn prepare_sysroot(
-        &mut self,
-        envs: impl IntoIterator<Item = (impl AsRef<OsStr>, impl AsRef<OsStr>)>,
-    ) -> Result<&mut Self> {
-        // skip the cargo subcommand
-        let args = self.get_args().skip(1);
+    fn populate_from_args(&mut self, args: &Args) -> &mut Self {
+        self.target(&args.target);
+        self.sysroot(args.sysroot_dir());
+        if let Some(clang) = &args.clang {
+            self.cc_env(&args.target, clang);
+        } else {
+            // If we couldn't find clang, use the default from the
+            // system path. This will then error if we try to build
+            // using cc-rs, but will succeed otherwise.
+            self.cc_env(&args.target, "clang");
+        }
+        if let Some(ar) = &args.ar {
+            self.ar_env(&args.target, ar);
+        } else {
+            // do nothing, let cc-rs find ar itself
+        }
+        self.append_cflags(&args.target, toolchain::cflags(args));
 
-        // but append a fake binary name so that clap can parse the arguments
-        let args = iter::once(OsStr::new("cargo-hyperlight")).chain(args);
+        self
+    }
+}
 
-        // get the current environment variables and merge them with the command's env
-        let envs = envs.into_iter().collect::<Vec<_>>();
-        let envs = envs
-            .iter()
-            .map(|(k, v)| (k.as_ref(), Some(v.as_ref())))
-            .chain(self.get_envs())
-            .collect::<HashMap<_, _>>()
-            .into_iter()
-            .filter_map(|(k, v)| v.map(|v| (k, v)));
-
-        // parse the arguments and environment variables
-        let args = Args::parse_from(args, envs, self.get_current_dir())?;
-
+impl Args {
+    pub fn prepare_sysroot(&self) -> Result<()> {
         // Build sysroot
-        let sysroot = sysroot::build(&args)?;
+        sysroot::build(self)?;
 
         // Build toolchain
-        toolchain::prepare(&args)?;
+        toolchain::prepare(self)?;
 
-        let triplet = &args.target;
-
-        let cc_bin = toolchain::find_cc()?;
-        let ar_bin = toolchain::find_ar()?;
-
-        // populate the command with the necessary environment variables
-        self.target(triplet)
-            .sysroot(&sysroot)
-            .cc_env(triplet, &cc_bin)
-            .ar_env(triplet, &ar_bin)
-            .append_cflags(triplet, toolchain::cflags(&args));
-
-        Ok(self)
+        Ok(())
     }
 }

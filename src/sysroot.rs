@@ -20,7 +20,7 @@ struct BuildPlan {
     invocations: Vec<Invocation>,
 }
 
-pub fn build(args: &Args) -> Result<PathBuf> {
+pub fn build(args: &Args) -> Result<()> {
     let target_spec = match args.target.as_str() {
         "x86_64-hyperlight-none" => {
             let mut spec = get_spec(args, "x86_64-unknown-none")?;
@@ -32,7 +32,9 @@ pub fn build(args: &Args) -> Result<PathBuf> {
                 Some([("gnu-lld".to_string(), vec!["-znostart-stop-gc".to_string()])].into());
             spec
         }
-        triplet => bail!("Unsupported target triple: {triplet}"),
+        triplet => bail!("Unsupported target triple: {triplet:?}
+Supported values are:
+ * x86_64-hyperlight-none"),
     };
 
     let sysroot_dir = args.sysroot_dir();
@@ -191,7 +193,7 @@ pub fn build(args: &Args) -> Result<PathBuf> {
         }
     }
 
-    Ok(sysroot_dir)
+    Ok(())
 }
 
 fn get_spec(args: &Args, triplet: impl AsRef<str>) -> Result<TargetSpec> {

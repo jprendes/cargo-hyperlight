@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{Result, bail};
@@ -25,16 +25,36 @@ pub trait CargoCmd {
     fn checked_status(&mut self) -> Result<()>;
 }
 
-pub fn cargo_cmd() -> Result<Command> {
+#[derive(Clone, Hash)]
+pub struct CargoBinary {
+    pub path: PathBuf,
+    pub rustup_toolchain: Option<OsString>,
+}
+
+impl CargoBinary {
+    pub fn command(&self) -> Command {
+        let mut cmd = Command::new(&self.path);
+        if let Some(rustup_toolchain) = &self.rustup_toolchain {
+            cmd.env("RUSTUP_TOOLCHAIN", rustup_toolchain);
+        }
+        cmd
+    }
+}
+
+pub fn find_cargo() -> Result<CargoBinary> {
     let cargo = match env::var_os("CARGO") {
         Some(cargo) => Path::new(&cargo).canonicalize()?,
         None => which::which("cargo")?.canonicalize()?,
     };
-    let mut cmd = Command::new(cargo);
-    if let Some(rustup_toolchain) = env::var_os("RUSTUP_TOOLCHAIN") {
-        cmd.env("RUSTUP_TOOLCHAIN", rustup_toolchain);
-    }
-    Ok(cmd)
+    let rustup_toolchain = env::var_os("RUSTUP_TOOLCHAIN");
+    Ok(CargoBinary {
+        path: cargo,
+        rustup_toolchain,
+    })
+}
+
+pub fn cargo_cmd() -> Result<Command> {
+    Ok(find_cargo()?.command())
 }
 
 pub struct CheckedOutput {
@@ -152,20 +172,7 @@ impl CargoCmd for Command {
         &self,
         base: impl IntoIterator<Item = (impl AsRef<OsStr>, impl AsRef<OsStr>)>,
     ) -> HashMap<OsString, OsString> {
-        let mut envs = base
-            .into_iter()
-            .map(|(k, v)| (k.as_ref().to_owned(), v.as_ref().to_owned()))
-            .collect::<HashMap<_, _>>();
-
-        for (k, v) in self.get_envs() {
-            if let Some(v) = v {
-                envs.insert(k.to_owned(), v.to_owned());
-            } else {
-                envs.remove(k);
-            }
-        }
-
-        envs
+        merge_env(base, self.get_envs())
     }
 
     fn checked_output(&mut self) -> Result<CheckedOutput> {
@@ -203,4 +210,24 @@ fn get_env(cmd: &Command, key: &str) -> Option<OsString> {
         Some((_, v)) => v.map(ToOwned::to_owned),
         None => std::env::var_os(key),
     }
+}
+
+pub fn merge_env(
+    base: impl IntoIterator<Item = (impl AsRef<OsStr>, impl AsRef<OsStr>)>,
+    envs: impl IntoIterator<Item = (impl AsRef<OsStr>, Option<impl AsRef<OsStr>>)>,
+) -> HashMap<OsString, OsString> {
+    let mut base = base
+        .into_iter()
+        .map(|(k, v)| (k.as_ref().to_owned(), v.as_ref().to_owned()))
+        .collect::<HashMap<_, _>>();
+
+    for (k, v) in envs {
+        if let Some(v) = v {
+            base.insert(k.as_ref().to_owned(), v.as_ref().to_owned());
+        } else {
+            base.remove(k.as_ref());
+        }
+    }
+
+    base
 }

@@ -1,16 +1,17 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::convert::Infallible;
 use std::env::VarsOs;
 use std::ffi::{OsStr, OsString, c_char};
 use std::fmt::Debug;
-use std::path::Path;
-use std::process::{Command as StdCommand, CommandArgs, CommandEnvs};
+use std::path::{Path, PathBuf};
+use std::process::Command as StdCommand;
 use std::{env, iter};
 
 use anyhow::{Context, Result};
 
 use crate::CargoCommandExt;
-use crate::cargo_cmd::{CargoCmd as _, cargo_cmd};
+use crate::cargo_cmd::{CargoBinary, CargoCmd as _, find_cargo, merge_env};
+use crate::cli::{Args, Warning};
 
 /// A process builder for cargo commands, providing a similar API to `std::process::Command`.
 ///
@@ -47,14 +48,42 @@ use crate::cargo_cmd::{CargoCmd as _, cargo_cmd};
 ///     .env("CARGO_TARGET_DIR", "/custom/target")
 ///     .args(["build", "--release"]);
 /// ```
+#[derive(Clone)]
 pub struct Command {
-    command: StdCommand,
-    clear_env: bool,
+    cargo: CargoBinary,
+    /// Arguments to pass to the cargo program
+    args: Vec<OsString>,
+    /// Environment variable mappings to set for the child process
+    inherit_envs: bool,
+    envs: BTreeMap<OsString, Option<OsString>>,
+    // Working directory for the child process
+    current_dir: Option<PathBuf>,
 }
 
 impl Debug for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Debug::fmt(&self.command, f)
+        let args = self.build_args_infallible();
+        let mut cmd = self.command();
+        cmd.populate_from_args(&args);
+
+        write!(f, "env ")?;
+        if let Some(current_dir) = &self.current_dir {
+            write!(f, "-C {current_dir:?} ")?;
+        }
+        if !self.inherit_envs {
+            write!(f, "-i ")?;
+        }
+        for (k, v) in cmd.get_envs() {
+            match v {
+                Some(v) => write!(f, "{}={:?} ", k.to_string_lossy(), v)?,
+                None => write!(f, "-u {} ", k.to_string_lossy())?,
+            }
+        }
+        write!(f, "{:?} ", self.get_program())?;
+        for arg in &self.args {
+            write!(f, "{:?} ", arg)?;
+        }
+        writeln!(f)
     }
 }
 
@@ -87,9 +116,13 @@ impl Command {
     /// let command = cargo().unwrap();
     /// ```
     pub(crate) fn new() -> Result<Self> {
-        Ok(Command {
-            command: cargo_cmd()?,
-            clear_env: false,
+        let cargo = find_cargo()?;
+        Ok(Self {
+            cargo,
+            args: Vec::new(),
+            envs: BTreeMap::new(),
+            inherit_envs: true,
+            current_dir: None,
         })
     }
 
@@ -131,7 +164,7 @@ impl Command {
     ///     .exec();
     /// ```
     pub fn arg(&mut self, arg: impl AsRef<OsStr>) -> &mut Self {
-        self.command.arg(arg.as_ref());
+        self.args.push(arg.as_ref().to_os_string());
         self
     }
 
@@ -158,7 +191,9 @@ impl Command {
     ///     .exec();
     /// ```
     pub fn args(&mut self, args: impl IntoIterator<Item = impl AsRef<OsStr>>) -> &mut Self {
-        self.command.args(args);
+        for arg in args {
+            self.arg(arg);
+        }
         self
     }
 
@@ -180,7 +215,7 @@ impl Command {
     ///
     /// [`canonicalize`]: std::fs::canonicalize
     pub fn current_dir(&mut self, dir: impl AsRef<Path>) -> &mut Self {
-        self.command.current_dir(dir);
+        self.current_dir = Some(dir.as_ref().to_path_buf());
         self
     }
 
@@ -215,7 +250,8 @@ impl Command {
     /// [`env_clear`]: Command::env_clear
     /// [`env_remove`]: Command::env_remove
     pub fn env(&mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> &mut Self {
-        self.command.env(key, value);
+        self.envs
+            .insert(key.as_ref().to_owned(), Some(value.as_ref().to_owned()));
         self
     }
 
@@ -224,7 +260,7 @@ impl Command {
     /// This method will remove all environment variables from the child process,
     /// including those that would normally be inherited from the parent process.
     /// Environment variables can be added back individually using [`env`].
-    /// 
+    ///
     /// If `RUSTUP_TOOLCHAIN` was set in the parent process, it will be preserved.
     ///
     /// # Examples
@@ -244,16 +280,8 @@ impl Command {
     ///
     /// [`env`]: Command::env
     pub fn env_clear(&mut self) -> &mut Self {
-        let rust_toolchain = self
-            .get_envs()
-            .find_map(|(k, v)| (k == "RUSTUP_TOOLCHAIN").then_some(v))
-            .flatten()
-            .map(|v| v.to_os_string());
-        self.clear_env = true;
-        self.command.env_clear();
-        if let Some(rust_toolchain) = rust_toolchain {
-            self.command.env("RUSTUP_TOOLCHAIN", rust_toolchain);
-        }
+        self.inherit_envs = false;
+        self.envs.clear();
         self
     }
 
@@ -281,7 +309,7 @@ impl Command {
     ///     .exec();
     /// ```
     pub fn env_remove(&mut self, key: impl AsRef<OsStr>) -> &mut Self {
-        self.command.env_remove(key);
+        self.envs.insert(key.as_ref().to_owned(), None);
         self
     }
 
@@ -339,7 +367,9 @@ impl Command {
         &mut self,
         envs: impl IntoIterator<Item = (impl AsRef<OsStr>, impl AsRef<OsStr>)>,
     ) -> &mut Self {
-        self.command.envs(envs);
+        for (k, v) in envs {
+            self.env(k, v);
+        }
         self
     }
 
@@ -361,8 +391,8 @@ impl Command {
     /// ```
     ///
     /// [`get_program`]: Command::get_program
-    pub fn get_args(&'_ self) -> CommandArgs<'_> {
-        self.command.get_args()
+    pub fn get_args(&'_ self) -> impl Iterator<Item = &OsStr> {
+        self.args.iter().map(|s| s.as_os_str())
     }
 
     /// Returns the working directory for the child process.
@@ -383,7 +413,7 @@ impl Command {
     /// assert_eq!(command.get_current_dir(), Some(Path::new("/tmp")));
     /// ```
     pub fn get_current_dir(&self) -> Option<&Path> {
-        self.command.get_current_dir()
+        self.current_dir.as_deref()
     }
 
     /// Returns an iterator over the environment mappings that will be set for the child process.
@@ -415,8 +445,8 @@ impl Command {
     /// [`env`]: Command::env
     /// [`envs`]: Command::envs
     /// [`env_remove`]: Command::env_remove
-    pub fn get_envs(&'_ self) -> CommandEnvs<'_> {
-        self.command.get_envs()
+    pub fn get_envs(&'_ self) -> impl Iterator<Item = (&OsStr, Option<&OsStr>)> {
+        self.envs.iter().map(|(k, v)| (k.as_os_str(), v.as_deref()))
     }
 
     /// Returns the base environment variables for the command.
@@ -427,17 +457,33 @@ impl Command {
     /// [`env_clear`]: Command::env_clear
     fn base_env(&self) -> VarsOs {
         let mut env = env::vars_os();
-        if self.clear_env {
+        if !self.inherit_envs {
+            // iterate over the whole VarOs to consume it
             env.find(|_| false);
         }
         env
     }
 
-    /// Resolves the final environment variables that will be passed to the cargo process.
-    ///
-    /// This combines the base environment with any explicitly set environment variables.
-    fn resolve_envs(&self) -> HashMap<OsString, OsString> {
-        self.command.resolve_env(self.base_env())
+    fn resolve_env(&self) -> HashMap<OsString, OsString> {
+        merge_env(self.base_env(), self.get_envs())
+    }
+
+    fn command(&self) -> StdCommand {
+        let mut command = self.cargo.command();
+        command.args(self.get_args());
+        if let Some(cwd) = &self.current_dir {
+            command.current_dir(cwd);
+        }
+        if !self.inherit_envs {
+            command.env_clear();
+        }
+        for (k, v) in self.get_envs() {
+            match v {
+                Some(v) => command.env(k, v),
+                None => command.env_remove(k),
+            };
+        }
+        command
     }
 
     /// Returns the path to the cargo program that will be executed.
@@ -451,16 +497,34 @@ impl Command {
     /// println!("Program: {:?}", command.get_program());
     /// ```
     pub fn get_program(&self) -> &OsStr {
-        self.command.get_program()
+        self.cargo.path.as_os_str()
     }
 
-    /// Prepares the sysroot for the cargo command.
-    ///
-    /// This is an internal method that sets up any necessary sysroot configuration
-    /// before executing the cargo command.
-    fn prepare_sysroot(&mut self) -> anyhow::Result<()> {
-        self.command.prepare_sysroot(self.base_env())?;
-        Ok(())
+    fn build_args(&self) -> Args {
+        // parse the arguments and environment variables
+        match Args::parse(
+            self.get_args(),
+            self.resolve_env(),
+            self.get_current_dir(),
+            Warning::WARN,
+        ) {
+            Ok(args) => args,
+        }
+    }
+
+    fn build_args_infallible(&self) -> Args {
+        match Args::parse(
+            self.get_args(),
+            self.resolve_env(),
+            self.get_current_dir(),
+            Warning::IGNORE,
+        ) {
+            Ok(args) => args,
+            Err(err) => {
+                eprintln!("Failed to parse arguments: {}", err);
+                std::process::exit(1);
+            }
+        }
     }
 
     /// Executes a cargo command as a child process, waiting for it to finish and
@@ -492,13 +556,17 @@ impl Command {
     /// - The sysroot preparation fails
     /// - The cargo process could not be spawned
     /// - The cargo process returned a non-zero exit status
-    pub fn status(&mut self) -> anyhow::Result<()> {
-        self.prepare_sysroot()
+    pub fn status(&self) -> anyhow::Result<()> {
+        let args = self.build_args();
+
+        args.prepare_sysroot()
             .context("Failed to prepare sysroot")?;
 
-        self.command
+        self.command()
+            .populate_from_args(&args)
             .checked_status()
-            .context("Failed to execute cargo")
+            .context("Failed to execute cargo")?;
+        Ok(())
     }
 
     /// Executes the cargo command, replacing the current process.
@@ -524,7 +592,7 @@ impl Command {
     /// This function will exit the process with code 101 if:
     /// - The sysroot preparation fails
     /// - The process replacement fails
-    pub fn exec(&mut self) -> ! {
+    pub fn exec(&self) -> ! {
         match self.exec_impl() {
             Err(e) => {
                 eprintln!("{e:?}");
@@ -537,18 +605,23 @@ impl Command {
     ///
     /// This method prepares the sysroot and then calls the low-level `exec` function
     /// to replace the current process.
-    fn exec_impl(&mut self) -> anyhow::Result<Infallible> {
-        self.prepare_sysroot()
+    fn exec_impl(&self) -> anyhow::Result<Infallible> {
+        let args = self.build_args();
+
+        args.prepare_sysroot()
             .context("Failed to prepare sysroot")?;
+
+        let mut command = self.command();
+        command.populate_from_args(&args);
 
         if let Some(cwd) = self.get_current_dir() {
             env::set_current_dir(cwd).context("Failed to change current directory")?;
         }
 
         Ok(exec(
-            self.get_program(),
-            self.get_args(),
-            self.resolve_envs(),
+            command.get_program(),
+            command.get_args(),
+            command.resolve_env(self.base_env()),
         )?)
     }
 }
