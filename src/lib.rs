@@ -4,15 +4,47 @@ use std::iter;
 
 use anyhow::Result;
 
-mod cargo;
+mod cargo_cmd;
 mod cli;
 mod command;
 mod sysroot;
 mod toolchain;
 
-use cargo::CargoCmd;
+use cargo_cmd::CargoCmd;
 use cli::Args;
-pub use command::CargoCommand;
+pub use command::Command;
+
+/// Constructs a new `Command` for launching cargo targeting
+/// [hyperlight](https://github.com/hyperlight-dev/hyperlight) guest code.
+///
+/// The value of the `CARGO` environment variable is used if it is set; otherwise, the
+/// default `cargo` from the system PATH is used.
+/// If `RUSTUP_TOOLCHAIN` is set in the environment, it is also propagated to the
+/// child process to ensure correct functioning of the rustup wrappers.
+///
+/// The default configuration is:
+/// - No arguments to the program
+/// - Inherits the current process's environment
+/// - Inherits the current process's working directory
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - If the `CARGO` environment variable is set but it specifies an invalid path
+/// - If the `CARGO` environment variable is not set and the `cargo` program cannot be found in the system PATH
+///
+/// # Examples
+///
+/// Basic usage:
+///
+/// ```rust
+/// use cargo_hyperlight::cargo;
+///
+/// let command = cargo().unwrap();
+/// ```
+pub fn cargo() -> Result<Command> {
+    Command::new()
+}
 
 impl Args {
     pub fn sysroot_dir(&self) -> std::path::PathBuf {

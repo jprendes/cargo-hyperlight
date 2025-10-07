@@ -25,7 +25,7 @@ pub trait CargoCmd {
     fn checked_status(&mut self) -> Result<()>;
 }
 
-pub fn cargo() -> Result<Command> {
+pub fn cargo_cmd() -> Result<Command> {
     let cargo = match env::var_os("CARGO") {
         Some(cargo) => Path::new(&cargo).canonicalize()?,
         None => which::which("cargo")?.canonicalize()?,

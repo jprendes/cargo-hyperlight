@@ -1,6 +1,6 @@
 use std::env;
 
-use cargo_hyperlight::CargoCommand;
+use cargo_hyperlight::cargo;
 
 fn main() -> ! {
     let args = env::args_os().enumerate().filter_map(|(i, arg)| {
@@ -12,7 +12,7 @@ fn main() -> ! {
         }
     });
 
-    CargoCommand::new()
+    cargo()
         .expect("Failed to create cargo command")
         .args(args)
         .exec()

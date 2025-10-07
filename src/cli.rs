@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use const_format::formatcp;
 
-use crate::cargo::{CargoCmd as _, cargo};
+use crate::cargo_cmd::{CargoCmd as _, cargo_cmd};
 
 pub struct Args {
     pub manifest_path: Option<PathBuf>,
@@ -111,7 +111,7 @@ fn resolve_target_dir(
     env: &HashMap<OsString, OsString>,
     cwd: &PathBuf,
 ) -> Result<PathBuf> {
-    let output = cargo()?
+    let output = cargo_cmd()?
         .env_clear()
         .envs(env.iter())
         .current_dir(cwd)
@@ -129,7 +129,7 @@ fn resolve_target_dir(
 }
 
 fn resolve_target(env: &HashMap<OsString, OsString>, cwd: &PathBuf) -> Result<String> {
-    let output = cargo()?
+    let output = cargo_cmd()?
         .env_clear()
         .envs(env.iter())
         .current_dir(cwd)

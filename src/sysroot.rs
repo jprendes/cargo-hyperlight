@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail, ensure};
 use target_spec_json::TargetSpec;
 
-use crate::cargo::{CargoCmd, cargo};
+use crate::cargo_cmd::{CargoCmd, cargo_cmd};
 use crate::cli::Args;
 
 const CARGO_TOML: &str = include_str!("dummy/_Cargo.toml");
@@ -49,7 +49,7 @@ pub fn build(args: &Args) -> Result<PathBuf> {
     )
     .context("Failed to write target spec file")?;
 
-    let version = cargo()?
+    let version = cargo_cmd()?
         .env_clear()
         .envs(args.env.iter())
         .current_dir(&args.current_dir)
@@ -85,7 +85,7 @@ pub fn build(args: &Args) -> Result<PathBuf> {
     }
 
     // Use cargo build's build plan to get the list of artifacts
-    let build_plan = cargo()?
+    let build_plan = cargo_cmd()?
         .env_clear()
         .envs(args.env.iter())
         .current_dir(&args.current_dir)
@@ -138,7 +138,7 @@ pub fn build(args: &Args) -> Result<PathBuf> {
 
     if should_build {
         // Build the sysroot
-        let success = cargo()?
+        let success = cargo_cmd()?
             .env_clear()
             .envs(args.env.iter())
             .current_dir(&args.current_dir)
@@ -195,7 +195,7 @@ pub fn build(args: &Args) -> Result<PathBuf> {
 }
 
 fn get_spec(args: &Args, triplet: impl AsRef<str>) -> Result<TargetSpec> {
-    let output = cargo()?
+    let output = cargo_cmd()?
         .env_clear()
         .envs(args.env.iter())
         .current_dir(&args.current_dir)

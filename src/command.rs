@@ -4,20 +4,20 @@ use std::env::VarsOs;
 use std::ffi::{OsStr, OsString, c_char};
 use std::fmt::Debug;
 use std::path::Path;
-use std::process::{Command, CommandArgs, CommandEnvs};
+use std::process::{Command as StdCommand, CommandArgs, CommandEnvs};
 use std::{env, iter};
 
 use anyhow::{Context, Result};
 
 use crate::CargoCommandExt;
-use crate::cargo::{CargoCmd as _, cargo};
+use crate::cargo_cmd::{CargoCmd as _, cargo_cmd};
 
 /// A process builder for cargo commands, providing a similar API to `std::process::Command`.
 ///
-/// `CargoCommand` is a wrapper around `std::process::Command` specifically designed for
+/// `Command` is a wrapper around `std::process::Command` specifically designed for
 /// executing cargo commands targeting [hyperlight](https://github.com/hyperlight-dev/hyperlight)
 /// guest code.
-/// Before executing the desired command, `CargoCommand` takes care of setting up the
+/// Before executing the desired command, `Command` takes care of setting up the
 /// appropriate environment. It:
 /// * creates a custom rust target for hyperlight guest code
 /// * creates a sysroot with Rust's libs core and alloc
@@ -29,9 +29,9 @@ use crate::cargo::{CargoCmd as _, cargo};
 /// Basic usage:
 ///
 /// ```rust,no_run
-/// use cargo_hyperlight::CargoCommand;
+/// use cargo_hyperlight::cargo;
 ///
-/// let mut command = CargoCommand::new().unwrap();
+/// let mut command = cargo().unwrap();
 /// command.arg("build").arg("--release");
 /// command.exec(); // This will replace the current process
 /// ```
@@ -39,27 +39,27 @@ use crate::cargo::{CargoCmd as _, cargo};
 /// Setting environment variables and working directory:
 ///
 /// ```rust
-/// use cargo_hyperlight::CargoCommand;
+/// use cargo_hyperlight::cargo;
 ///
-/// let mut command = CargoCommand::new().unwrap();
+/// let mut command = cargo().unwrap();
 /// command
 ///     .current_dir("/path/to/project")
 ///     .env("CARGO_TARGET_DIR", "/custom/target")
 ///     .args(["build", "--release"]);
 /// ```
-pub struct CargoCommand {
-    command: Command,
+pub struct Command {
+    command: StdCommand,
     clear_env: bool,
 }
 
-impl Debug for CargoCommand {
+impl Debug for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Debug::fmt(&self.command, f)
     }
 }
 
-impl CargoCommand {
-    /// Constructs a new `CargoCommand` for launching the cargo program.
+impl Command {
+    /// Constructs a new `Command` for launching the cargo program.
     ///
     /// The value of the `CARGO` environment variable is used if it is set; otherwise, the
     /// default `cargo` from the system PATH is used.
@@ -82,13 +82,13 @@ impl CargoCommand {
     /// Basic usage:
     ///
     /// ```rust
-    /// use cargo_hyperlight::CargoCommand;
+    /// use cargo_hyperlight::cargo;
     ///
-    /// let command = CargoCommand::new().unwrap();
+    /// let command = cargo().unwrap();
     /// ```
-    pub fn new() -> Result<Self> {
-        Ok(CargoCommand {
-            command: cargo()?,
+    pub(crate) fn new() -> Result<Self> {
+        Ok(Command {
+            command: cargo_cmd()?,
             clear_env: false,
         })
     }
@@ -98,20 +98,20 @@ impl CargoCommand {
     /// Only one argument can be passed per use. So instead of:
     ///
     /// ```no_run
-    /// # let mut command = cargo_hyperlight::CargoCommand::new().unwrap();
+    /// # let mut command = cargo_hyperlight::cargo().unwrap();
     /// command.arg("--features some_feature");
     /// ```
     ///
     /// usage would be:
     ///
     /// ```no_run
-    /// # let mut command = cargo_hyperlight::CargoCommand::new().unwrap();
+    /// # let mut command = cargo_hyperlight::cargo().unwrap();
     /// command.arg("--features").arg("some_feature");
     /// ```
     ///
     /// To pass multiple arguments see [`args`].
     ///
-    /// [`args`]: CargoCommand::args
+    /// [`args`]: Command::args
     ///
     /// Note that the argument is not shell-escaped, so if you pass an argument like
     /// `"hello world"`, it will be passed as a single argument with the literal
@@ -122,9 +122,9 @@ impl CargoCommand {
     /// Basic usage:
     ///
     /// ```no_run
-    /// use cargo_hyperlight::CargoCommand;
+    /// use cargo_hyperlight::cargo;
     ///
-    /// CargoCommand::new()
+    /// cargo()
     ///     .unwrap()
     ///     .arg("build")
     ///     .arg("--release")
@@ -139,7 +139,7 @@ impl CargoCommand {
     ///
     /// To pass a single argument see [`arg`].
     ///
-    /// [`arg`]: CargoCommand::arg
+    /// [`arg`]: Command::arg
     ///
     /// Note that the arguments are not shell-escaped, so if you pass an argument
     /// like `"hello world"`, it will be passed as a single argument with the
@@ -150,9 +150,9 @@ impl CargoCommand {
     /// Basic usage:
     ///
     /// ```no_run
-    /// use cargo_hyperlight::CargoCommand;
+    /// use cargo_hyperlight::cargo;
     ///
-    /// CargoCommand::new()
+    /// cargo()
     ///     .unwrap()
     ///     .args(["build", "--release"])
     ///     .exec();
@@ -169,9 +169,9 @@ impl CargoCommand {
     /// Basic usage:
     ///
     /// ```no_run
-    /// use cargo_hyperlight::CargoCommand;
+    /// use cargo_hyperlight::cargo;
     ///
-    /// CargoCommand::new()
+    /// cargo()
     ///     .unwrap()
     ///     .current_dir("path/to/project")
     ///     .arg("build")
@@ -202,18 +202,18 @@ impl CargoCommand {
     /// Basic usage:
     ///
     /// ```no_run
-    /// use cargo_hyperlight::CargoCommand;
+    /// use cargo_hyperlight::cargo;
     ///
-    /// CargoCommand::new()
+    /// cargo()
     ///     .unwrap()
     ///     .env("CARGO_TARGET_DIR", "/path/to/target")
     ///     .arg("build")
     ///     .exec();
     /// ```
     ///
-    /// [`env`]: CargoCommand::env
-    /// [`env_clear`]: CargoCommand::env_clear
-    /// [`env_remove`]: CargoCommand::env_remove
+    /// [`env`]: Command::env
+    /// [`env_clear`]: Command::env_clear
+    /// [`env_remove`]: Command::env_remove
     pub fn env(&mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> &mut Self {
         self.command.env(key, value);
         self
@@ -232,9 +232,9 @@ impl CargoCommand {
     /// Basic usage:
     ///
     /// ```no_run
-    /// use cargo_hyperlight::CargoCommand;
+    /// use cargo_hyperlight::cargo;
     ///
-    /// CargoCommand::new()
+    /// cargo()
     ///     .unwrap()
     ///     .env_clear()
     ///     .env("CARGO_TARGET_DIR", "/path/to/target")
@@ -242,7 +242,7 @@ impl CargoCommand {
     ///     .exec();
     /// ```
     ///
-    /// [`env`]: CargoCommand::env
+    /// [`env`]: Command::env
     pub fn env_clear(&mut self) -> &mut Self {
         let rust_toolchain = self
             .get_envs()
@@ -272,9 +272,9 @@ impl CargoCommand {
     /// Basic usage:
     ///
     /// ```no_run
-    /// use cargo_hyperlight::CargoCommand;
+    /// use cargo_hyperlight::cargo;
     ///
-    /// CargoCommand::new()
+    /// cargo()
     ///     .unwrap()
     ///     .env_remove("CARGO_TARGET_DIR")
     ///     .arg("build")
@@ -306,13 +306,13 @@ impl CargoCommand {
     ///
     /// ```no_run
     /// use std::collections::HashMap;
-    /// use cargo_hyperlight::CargoCommand;
+    /// use cargo_hyperlight::cargo;
     ///
     /// let mut envs = HashMap::new();
     /// envs.insert("CARGO_TARGET_DIR", "/path/to/target");
     /// envs.insert("CARGO_HOME", "/path/to/.cargo");
     ///
-    /// CargoCommand::new()
+    /// cargo()
     ///     .unwrap()
     ///     .envs(&envs)
     ///     .arg("build")
@@ -320,9 +320,9 @@ impl CargoCommand {
     /// ```
     ///
     /// ```no_run
-    /// use cargo_hyperlight::CargoCommand;
+    /// use cargo_hyperlight::cargo;
     ///
-    /// CargoCommand::new()
+    /// cargo()
     ///     .unwrap()
     ///     .envs([
     ///         ("CARGO_TARGET_DIR", "/path/to/target"),
@@ -332,9 +332,9 @@ impl CargoCommand {
     ///     .exec();
     /// ```
     ///
-    /// [`env`]: CargoCommand::env
-    /// [`env_clear`]: CargoCommand::env_clear
-    /// [`env_remove`]: CargoCommand::env_remove
+    /// [`env`]: Command::env
+    /// [`env_clear`]: Command::env_clear
+    /// [`env_remove`]: Command::env_remove
     pub fn envs(
         &mut self,
         envs: impl IntoIterator<Item = (impl AsRef<OsStr>, impl AsRef<OsStr>)>,
@@ -351,16 +351,16 @@ impl CargoCommand {
     /// # Examples
     ///
     /// ```no_run
-    /// use cargo_hyperlight::CargoCommand;
+    /// use cargo_hyperlight::cargo;
     ///
-    /// let mut command = CargoCommand::new().unwrap();
+    /// let mut command = cargo().unwrap();
     /// command.arg("build").arg("--release");
     ///
     /// let args: Vec<&std::ffi::OsStr> = command.get_args().collect();
     /// assert_eq!(args, &["build", "--release"]);
     /// ```
     ///
-    /// [`get_program`]: CargoCommand::get_program
+    /// [`get_program`]: Command::get_program
     pub fn get_args(&'_ self) -> CommandArgs<'_> {
         self.command.get_args()
     }
@@ -374,9 +374,9 @@ impl CargoCommand {
     ///
     /// ```no_run
     /// use std::path::Path;
-    /// use cargo_hyperlight::CargoCommand;
+    /// use cargo_hyperlight::cargo;
     ///
-    /// let mut command = CargoCommand::new().unwrap();
+    /// let mut command = cargo().unwrap();
     /// assert_eq!(command.get_current_dir(), None);
     ///
     /// command.current_dir("/tmp");
@@ -401,9 +401,9 @@ impl CargoCommand {
     ///
     /// ```no_run
     /// use std::ffi::OsStr;
-    /// use cargo_hyperlight::CargoCommand;
+    /// use cargo_hyperlight::cargo;
     ///
-    /// let mut command = CargoCommand::new().unwrap();
+    /// let mut command = cargo().unwrap();
     /// command.env("CARGO_HOME", "/path/to/.cargo");
     /// command.env_remove("CARGO_TARGET_DIR");
     ///
@@ -412,9 +412,9 @@ impl CargoCommand {
     /// }
     /// ```
     ///
-    /// [`env`]: CargoCommand::env
-    /// [`envs`]: CargoCommand::envs
-    /// [`env_remove`]: CargoCommand::env_remove
+    /// [`env`]: Command::env
+    /// [`envs`]: Command::envs
+    /// [`env_remove`]: Command::env_remove
     pub fn get_envs(&'_ self) -> CommandEnvs<'_> {
         self.command.get_envs()
     }
@@ -424,7 +424,7 @@ impl CargoCommand {
     /// This method returns the environment variables that will be inherited
     /// from the current process, taking into account whether [`env_clear`] has been called.
     ///
-    /// [`env_clear`]: CargoCommand::env_clear
+    /// [`env_clear`]: Command::env_clear
     fn base_env(&self) -> VarsOs {
         let mut env = env::vars_os();
         if self.clear_env {
@@ -445,9 +445,9 @@ impl CargoCommand {
     /// # Examples
     ///
     /// ```no_run
-    /// use cargo_hyperlight::CargoCommand;
+    /// use cargo_hyperlight::cargo;
     ///
-    /// let command = CargoCommand::new().unwrap();
+    /// let command = cargo().unwrap();
     /// println!("Program: {:?}", command.get_program());
     /// ```
     pub fn get_program(&self) -> &OsStr {
@@ -473,9 +473,9 @@ impl CargoCommand {
     /// Basic usage:
     ///
     /// ```no_run
-    /// use cargo_hyperlight::CargoCommand;
+    /// use cargo_hyperlight::cargo;
     ///
-    /// let result = CargoCommand::new()
+    /// let result = cargo()
     ///     .unwrap()
     ///     .arg("build")
     ///     .status();
@@ -511,15 +511,15 @@ impl CargoCommand {
     /// Basic usage:
     ///
     /// ```no_run
-    /// use cargo_hyperlight::CargoCommand;
+    /// use cargo_hyperlight::cargo;
     ///
-    /// CargoCommand::new()
+    /// cargo()
     ///     .unwrap()
     ///     .arg("build")
     ///     .exec(); // This will never return
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
     /// This function will exit the process with code 101 if:
     /// - The sysroot preparation fails

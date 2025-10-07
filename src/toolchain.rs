@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use regex::Regex;
 
-use crate::cargo::{CargoCmd, cargo};
+use crate::cargo_cmd::{CargoCmd, cargo_cmd};
 use crate::cli::Args;
 
 #[derive(serde::Deserialize)]
@@ -22,7 +22,7 @@ struct CargoMetadataPackage {
 }
 
 pub fn prepare(args: &Args) -> Result<()> {
-    let metadata = cargo()?
+    let metadata = cargo_cmd()?
         .env_clear()
         .envs(args.env.iter())
         .current_dir(&args.current_dir)
