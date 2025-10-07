@@ -15,7 +15,14 @@ use crate::cargo::{CargoCmd as _, cargo};
 /// A process builder for cargo commands, providing a similar API to `std::process::Command`.
 ///
 /// `CargoCommand` is a wrapper around `std::process::Command` specifically designed for
-/// executing cargo commands with additional functionality like sysroot preparation.
+/// executing cargo commands targeting [hyperlight](https://github.com/hyperlight-dev/hyperlight)
+/// guest code.
+/// Before executing the desired command, `CargoCommand` takes care of setting up the
+/// appropriate environment. It:
+/// * creates a custom rust target for hyperlight guest code
+/// * creates a sysroot with Rust's libs core and alloc
+/// * finds the appropriate compiler and archiver for any C dependencies
+/// * sets up necessary environment variables for `cc-rs` and `bindgen` to work correctly.
 ///
 /// # Examples
 ///
@@ -60,15 +67,15 @@ impl Default for CargoCommand {
 impl CargoCommand {
     /// Constructs a new `CargoCommand` for launching the cargo program.
     ///
+    /// The value of the `CARGO` environment variable is used if it is set; otherwise, the
+    /// default `cargo` from binary `PATH` is used.
+    /// If `RUSTUP_TOOLCHAIN` is set in the environment, it is also propagated to the
+    /// child process to ensure correct functioning of the rustup wrappers.
+    ///
     /// The default configuration is:
     /// - No arguments to the program
     /// - Inherits the current process's environment
     /// - Inherits the current process's working directory
-    /// - Inherits stdin/stdout/stderr for [`spawn`] or [`status`], but creates pipes for [`output`]
-    ///
-    /// [`spawn`]: CargoCommand::spawn
-    /// [`status`]: CargoCommand::status
-    /// [`output`]: CargoCommand::output
     ///
     /// # Examples
     ///
@@ -242,8 +249,16 @@ impl CargoCommand {
     ///
     /// [`env`]: CargoCommand::env
     pub fn env_clear(&mut self) -> &mut Self {
+        let rust_toolchain = self
+            .get_envs()
+            .find_map(|(k, v)| (k == "RUSTUP_TOOLCHAIN").then_some(v))
+            .flatten()
+            .map(|v| v.to_os_string());
         self.clear_env = true;
         self.command.env_clear();
+        if let Some(rust_toolchain) = rust_toolchain {
+            self.command.env("RUSTUP_TOOLCHAIN", rust_toolchain);
+        }
         self
     }
 
@@ -520,6 +535,10 @@ impl CargoCommand {
     fn exec_impl(&mut self) -> anyhow::Result<Infallible> {
         self.prepare_sysroot()
             .context("Failed to prepare sysroot")?;
+
+        if let Some(cwd) = self.get_current_dir() {
+            env::set_current_dir(cwd).context("Failed to change current directory")?;
+        }
 
         Ok(exec(
             self.get_program(),
