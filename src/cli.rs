@@ -111,7 +111,7 @@ fn resolve_target_dir(
     env: &HashMap<OsString, OsString>,
     cwd: &PathBuf,
 ) -> Result<PathBuf> {
-    let output = cargo()
+    let output = cargo()?
         .env_clear()
         .envs(env.iter())
         .current_dir(cwd)
@@ -129,7 +129,7 @@ fn resolve_target_dir(
 }
 
 fn resolve_target(env: &HashMap<OsString, OsString>, cwd: &PathBuf) -> Result<String> {
-    let output = cargo()
+    let output = cargo()?
         .env_clear()
         .envs(env.iter())
         .current_dir(cwd)

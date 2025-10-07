@@ -12,5 +12,8 @@ fn main() -> ! {
         }
     });
 
-    CargoCommand::new().args(args).exec()
+    CargoCommand::new()
+        .expect("Failed to create cargo command")
+        .args(args)
+        .exec()
 }

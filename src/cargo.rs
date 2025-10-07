@@ -25,13 +25,16 @@ pub trait CargoCmd {
     fn checked_status(&mut self) -> Result<()>;
 }
 
-pub fn cargo() -> Command {
-    let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+pub fn cargo() -> Result<Command> {
+    let cargo = match env::var_os("CARGO") {
+        Some(cargo) => Path::new(&cargo).canonicalize()?,
+        None => which::which("cargo")?.canonicalize()?,
+    };
     let mut cmd = Command::new(cargo);
     if let Some(rustup_toolchain) = env::var_os("RUSTUP_TOOLCHAIN") {
         cmd.env("RUSTUP_TOOLCHAIN", rustup_toolchain);
     }
-    cmd
+    Ok(cmd)
 }
 
 pub struct CheckedOutput {

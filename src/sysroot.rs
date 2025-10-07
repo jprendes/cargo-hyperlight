@@ -49,7 +49,7 @@ pub fn build(args: &Args) -> Result<PathBuf> {
     )
     .context("Failed to write target spec file")?;
 
-    let version = cargo()
+    let version = cargo()?
         .env_clear()
         .envs(args.env.iter())
         .current_dir(&args.current_dir)
@@ -85,7 +85,7 @@ pub fn build(args: &Args) -> Result<PathBuf> {
     }
 
     // Use cargo build's build plan to get the list of artifacts
-    let build_plan = cargo()
+    let build_plan = cargo()?
         .env_clear()
         .envs(args.env.iter())
         .current_dir(&args.current_dir)
@@ -138,7 +138,7 @@ pub fn build(args: &Args) -> Result<PathBuf> {
 
     if should_build {
         // Build the sysroot
-        let success = cargo()
+        let success = cargo()?
             .env_clear()
             .envs(args.env.iter())
             .current_dir(&args.current_dir)
@@ -195,7 +195,7 @@ pub fn build(args: &Args) -> Result<PathBuf> {
 }
 
 fn get_spec(args: &Args, triplet: impl AsRef<str>) -> Result<TargetSpec> {
-    let output = cargo()
+    let output = cargo()?
         .env_clear()
         .envs(args.env.iter())
         .current_dir(&args.current_dir)

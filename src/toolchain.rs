@@ -22,7 +22,7 @@ struct CargoMetadataPackage {
 }
 
 pub fn prepare(args: &Args) -> Result<()> {
-    let metadata = cargo()
+    let metadata = cargo()?
         .env_clear()
         .envs(args.env.iter())
         .current_dir(&args.current_dir)

@@ -7,7 +7,7 @@ use std::path::Path;
 use std::process::{Command, CommandArgs, CommandEnvs};
 use std::{env, iter};
 
-use anyhow::Context;
+use anyhow::{Context, Result};
 
 use crate::CargoCommandExt;
 use crate::cargo::{CargoCmd as _, cargo};
@@ -28,10 +28,10 @@ use crate::cargo::{CargoCmd as _, cargo};
 ///
 /// Basic usage:
 ///
-/// ```rust
+/// ```rust,no_run
 /// use cargo_hyperlight::CargoCommand;
 ///
-/// let mut command = CargoCommand::new();
+/// let mut command = CargoCommand::new().unwrap();
 /// command.arg("build").arg("--release");
 /// command.exec(); // This will replace the current process
 /// ```
@@ -41,7 +41,7 @@ use crate::cargo::{CargoCmd as _, cargo};
 /// ```rust
 /// use cargo_hyperlight::CargoCommand;
 ///
-/// let mut command = CargoCommand::new();
+/// let mut command = CargoCommand::new().unwrap();
 /// command
 ///     .current_dir("/path/to/project")
 ///     .env("CARGO_TARGET_DIR", "/custom/target")
@@ -58,17 +58,11 @@ impl Debug for CargoCommand {
     }
 }
 
-impl Default for CargoCommand {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl CargoCommand {
     /// Constructs a new `CargoCommand` for launching the cargo program.
     ///
     /// The value of the `CARGO` environment variable is used if it is set; otherwise, the
-    /// default `cargo` from binary `PATH` is used.
+    /// default `cargo` from the system PATH is used.
     /// If `RUSTUP_TOOLCHAIN` is set in the environment, it is also propagated to the
     /// child process to ensure correct functioning of the rustup wrappers.
     ///
@@ -77,6 +71,12 @@ impl CargoCommand {
     /// - Inherits the current process's environment
     /// - Inherits the current process's working directory
     ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// - If the `CARGO` environment variable is set but it specifies an invalid path
+    /// - If the `CARGO` environment variable is not set and the `cargo` program cannot be found in the system PATH
+    ///
     /// # Examples
     ///
     /// Basic usage:
@@ -84,13 +84,13 @@ impl CargoCommand {
     /// ```rust
     /// use cargo_hyperlight::CargoCommand;
     ///
-    /// let command = CargoCommand::new();
+    /// let command = CargoCommand::new().unwrap();
     /// ```
-    pub fn new() -> Self {
-        CargoCommand {
-            command: cargo(),
+    pub fn new() -> Result<Self> {
+        Ok(CargoCommand {
+            command: cargo()?,
             clear_env: false,
-        }
+        })
     }
 
     /// Adds an argument to pass to the cargo program.
@@ -98,13 +98,15 @@ impl CargoCommand {
     /// Only one argument can be passed per use. So instead of:
     ///
     /// ```no_run
-    /// command.arg("-C /path/to/repo");
+    /// # let mut command = cargo_hyperlight::CargoCommand::new().unwrap();
+    /// command.arg("--features some_feature");
     /// ```
     ///
     /// usage would be:
     ///
     /// ```no_run
-    /// command.arg("-C").arg("/path/to/repo");
+    /// # let mut command = cargo_hyperlight::CargoCommand::new().unwrap();
+    /// command.arg("--features").arg("some_feature");
     /// ```
     ///
     /// To pass multiple arguments see [`args`].
@@ -123,9 +125,10 @@ impl CargoCommand {
     /// use cargo_hyperlight::CargoCommand;
     ///
     /// CargoCommand::new()
-    ///         .arg("build")
-    ///         .arg("--release")
-    ///         .exec();
+    ///     .unwrap()
+    ///     .arg("build")
+    ///     .arg("--release")
+    ///     .exec();
     /// ```
     pub fn arg(&mut self, arg: impl AsRef<OsStr>) -> &mut Self {
         self.command.arg(arg.as_ref());
@@ -150,16 +153,9 @@ impl CargoCommand {
     /// use cargo_hyperlight::CargoCommand;
     ///
     /// CargoCommand::new()
-    ///         .args(["build", "--release"])
-    ///         .exec();
-    /// ```
-    ///
-    /// ```no_run
-    /// use cargo_hyperlight::CargoCommand;
-    ///
-    /// CargoCommand::new()
-    ///         .args(&["build", "--release"])
-    ///         .exec();
+    ///     .unwrap()
+    ///     .args(["build", "--release"])
+    ///     .exec();
     /// ```
     pub fn args(&mut self, args: impl IntoIterator<Item = impl AsRef<OsStr>>) -> &mut Self {
         self.command.args(args);
@@ -167,14 +163,6 @@ impl CargoCommand {
     }
 
     /// Sets the working directory for the child process.
-    ///
-    /// # Platform-specific behavior
-    ///
-    /// If the program path is relative (e.g., `"./script.sh"`), it's ambiguous
-    /// whether it should be interpreted relative to the parent's working
-    /// directory or relative to `current_dir`. The behavior in this case is
-    /// platform specific and unstable, and it's recommended to use
-    /// [`canonicalize`] to get an absolute program path instead.
     ///
     /// # Examples
     ///
@@ -184,9 +172,10 @@ impl CargoCommand {
     /// use cargo_hyperlight::CargoCommand;
     ///
     /// CargoCommand::new()
-    ///         .current_dir("/bin")
-    ///         .arg("build")
-    ///         .exec();
+    ///     .unwrap()
+    ///     .current_dir("path/to/project")
+    ///     .arg("build")
+    ///     .exec();
     /// ```
     ///
     /// [`canonicalize`]: std::fs::canonicalize
@@ -201,9 +190,9 @@ impl CargoCommand {
     /// or overwrite a variable if it already exists.
     ///
     /// Child processes will inherit environment variables from their parent process by
-    /// default (unless [`env_clear`] is used), including variables set with this method.
-    /// Environment variable mappings added or updated with this method will take
-    /// precedence over inherited variables.
+    /// default. Environment variables explicitly set using [`env`] take precedence
+    /// over inherited variables. You can disable environment variable inheritance entirely
+    /// using [`env_clear`] or for a single key using [`env_remove`].
     ///
     /// Note that environment variable names are case-insensitive (but
     /// case-preserving) on Windows and case-sensitive on all other platforms.
@@ -216,12 +205,15 @@ impl CargoCommand {
     /// use cargo_hyperlight::CargoCommand;
     ///
     /// CargoCommand::new()
-    ///         .env("PATH", "/bin")
-    ///         .arg("build")
-    ///         .exec();
+    ///     .unwrap()
+    ///     .env("CARGO_TARGET_DIR", "/path/to/target")
+    ///     .arg("build")
+    ///     .exec();
     /// ```
     ///
+    /// [`env`]: CargoCommand::env
     /// [`env_clear`]: CargoCommand::env_clear
+    /// [`env_remove`]: CargoCommand::env_remove
     pub fn env(&mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> &mut Self {
         self.command.env(key, value);
         self
@@ -232,6 +224,8 @@ impl CargoCommand {
     /// This method will remove all environment variables from the child process,
     /// including those that would normally be inherited from the parent process.
     /// Environment variables can be added back individually using [`env`].
+    /// 
+    /// If `RUSTUP_TOOLCHAIN` was set in the parent process, it will be preserved.
     ///
     /// # Examples
     ///
@@ -241,10 +235,11 @@ impl CargoCommand {
     /// use cargo_hyperlight::CargoCommand;
     ///
     /// CargoCommand::new()
-    ///         .env_clear()
-    ///         .env("PATH", "/bin")
-    ///         .arg("build")
-    ///         .exec();
+    ///     .unwrap()
+    ///     .env_clear()
+    ///     .env("CARGO_TARGET_DIR", "/path/to/target")
+    ///     .arg("build")
+    ///     .exec();
     /// ```
     ///
     /// [`env`]: CargoCommand::env
@@ -280,9 +275,10 @@ impl CargoCommand {
     /// use cargo_hyperlight::CargoCommand;
     ///
     /// CargoCommand::new()
-    ///         .env_remove("PATH")
-    ///         .arg("build")
-    ///         .exec();
+    ///     .unwrap()
+    ///     .env_remove("CARGO_TARGET_DIR")
+    ///     .arg("build")
+    ///     .exec();
     /// ```
     pub fn env_remove(&mut self, key: impl AsRef<OsStr>) -> &mut Self {
         self.command.env_remove(key);
@@ -297,9 +293,9 @@ impl CargoCommand {
     /// implementing `IntoIterator` with the appropriate item type.
     ///
     /// Child processes will inherit environment variables from their parent process by
-    /// default (unless [`env_clear`] is used), including variables set with this method.
-    /// Environment variable mappings added or updated with this method will take
-    /// precedence over inherited variables.
+    /// default. Environment variables explicitly set using [`env`] take precedence
+    /// over inherited variables. You can disable environment variable inheritance entirely
+    /// using [`env_clear`] or for a single key using [`env_remove`].
     ///
     /// Note that environment variable names are case-insensitive (but
     /// case-preserving) on Windows and case-sensitive on all other platforms.
@@ -313,25 +309,32 @@ impl CargoCommand {
     /// use cargo_hyperlight::CargoCommand;
     ///
     /// let mut envs = HashMap::new();
-    /// envs.insert("PATH", "/bin");
-    /// envs.insert("CARGO_HOME", "/tmp/cargo");
+    /// envs.insert("CARGO_TARGET_DIR", "/path/to/target");
+    /// envs.insert("CARGO_HOME", "/path/to/.cargo");
     ///
     /// CargoCommand::new()
-    ///         .envs(&envs)
-    ///         .arg("build")
-    ///         .exec();
+    ///     .unwrap()
+    ///     .envs(&envs)
+    ///     .arg("build")
+    ///     .exec();
     /// ```
     ///
     /// ```no_run
     /// use cargo_hyperlight::CargoCommand;
     ///
     /// CargoCommand::new()
-    ///         .envs([("PATH", "/bin"), ("CARGO_HOME", "/tmp/cargo")])
-    ///         .arg("build")
-    ///         .exec();
+    ///     .unwrap()
+    ///     .envs([
+    ///         ("CARGO_TARGET_DIR", "/path/to/target"),
+    ///         ("CARGO_HOME", "/path/to/.cargo"),
+    ///     ])
+    ///     .arg("build")
+    ///     .exec();
     /// ```
     ///
+    /// [`env`]: CargoCommand::env
     /// [`env_clear`]: CargoCommand::env_clear
+    /// [`env_remove`]: CargoCommand::env_remove
     pub fn envs(
         &mut self,
         envs: impl IntoIterator<Item = (impl AsRef<OsStr>, impl AsRef<OsStr>)>,
@@ -350,7 +353,7 @@ impl CargoCommand {
     /// ```no_run
     /// use cargo_hyperlight::CargoCommand;
     ///
-    /// let mut command = CargoCommand::new();
+    /// let mut command = CargoCommand::new().unwrap();
     /// command.arg("build").arg("--release");
     ///
     /// let args: Vec<&std::ffi::OsStr> = command.get_args().collect();
@@ -373,11 +376,11 @@ impl CargoCommand {
     /// use std::path::Path;
     /// use cargo_hyperlight::CargoCommand;
     ///
-    /// let mut command = CargoCommand::new();
+    /// let mut command = CargoCommand::new().unwrap();
     /// assert_eq!(command.get_current_dir(), None);
     ///
-    /// command.current_dir("/bin");
-    /// assert_eq!(command.get_current_dir(), Some(Path::new("/bin")));
+    /// command.current_dir("/tmp");
+    /// assert_eq!(command.get_current_dir(), Some(Path::new("/tmp")));
     /// ```
     pub fn get_current_dir(&self) -> Option<&Path> {
         self.command.get_current_dir()
@@ -400,9 +403,9 @@ impl CargoCommand {
     /// use std::ffi::OsStr;
     /// use cargo_hyperlight::CargoCommand;
     ///
-    /// let mut command = CargoCommand::new();
-    /// command.env("CARGO_HOME", "/tmp/cargo");
-    /// command.env_remove("PATH");
+    /// let mut command = CargoCommand::new().unwrap();
+    /// command.env("CARGO_HOME", "/path/to/.cargo");
+    /// command.env_remove("CARGO_TARGET_DIR");
     ///
     /// for (key, value) in command.get_envs() {
     ///     println!("{key:?} => {value:?}");
@@ -444,8 +447,8 @@ impl CargoCommand {
     /// ```no_run
     /// use cargo_hyperlight::CargoCommand;
     ///
-    /// let command = CargoCommand::new();
-    /// println!("Program: {}", command.get_program().to_string_lossy());
+    /// let command = CargoCommand::new().unwrap();
+    /// println!("Program: {:?}", command.get_program());
     /// ```
     pub fn get_program(&self) -> &OsStr {
         self.command.get_program()
@@ -463,7 +466,7 @@ impl CargoCommand {
     /// Executes a cargo command as a child process, waiting for it to finish and
     /// collecting its exit status.
     ///
-    /// By default, stdin, stdout and stderr are inherited from the parent.
+    /// The process stdin, stdout and stderr are inherited from the parent.
     ///
     /// # Examples
     ///
@@ -473,6 +476,7 @@ impl CargoCommand {
     /// use cargo_hyperlight::CargoCommand;
     ///
     /// let result = CargoCommand::new()
+    ///     .unwrap()
     ///     .arg("build")
     ///     .status();
     ///
@@ -510,6 +514,7 @@ impl CargoCommand {
     /// use cargo_hyperlight::CargoCommand;
     ///
     /// CargoCommand::new()
+    ///     .unwrap()
     ///     .arg("build")
     ///     .exec(); // This will never return
     /// ```
