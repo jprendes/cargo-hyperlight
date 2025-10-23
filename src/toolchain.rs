@@ -83,6 +83,7 @@ pub fn cflags(args: &Args) -> OsString {
         // terrible hack, see
         // https://github.com/hyperlight-dev/hyperlight/blob/main/src/hyperlight_guest_bin/build.rs#L80
         "--target=x86_64-unknown-linux-none",
+        "-U__linux__",
         // We don't support stack protectors at the moment, but Arch Linux clang
         // auto-enables them for -linux platforms, so explicitly disable them.
         "-fno-stack-protector",
