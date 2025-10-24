@@ -135,6 +135,8 @@ impl CargoCmd for Command {
             format!("CFLAGS_{triplet}"),
             format!("CFLAGS_{triplet_snake_case}"),
             format!("CFLAGS_{triplet_snake_case_upper}"),
+            "CFLAGS_hyperlight".to_string(),
+            "CFLAGS_HYPERLIGHT".to_string(),
             "HYPERLIGHT_CFLAGS".to_string(),
             "TARGET_CFLAGS".to_string(),
             "CFLAGS".to_string(),
