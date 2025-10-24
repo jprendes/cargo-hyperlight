@@ -6,14 +6,14 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
-console = "0.16.1"
-const_format = "0.2.34"
-glob = "0.3.3"
-libc = "0.2.176"
-regex = "1.11.3"
-semver = { version = "1.0.27", features = ["serde"] }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.143"
+console = "0.16"
+const_format = "0.2"
+glob = "0.3"
+libc = "0.2"
+regex = "1.12"
+semver = { version = "1.0", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 # pin target-spec-json to 0.2.1 as 0.2.3 ist incompatible with older rustc versions
 target-spec-json = "=0.2.1"
 which = { version = "8", features = ["regex"] }
