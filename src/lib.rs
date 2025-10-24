@@ -83,6 +83,7 @@ impl CargoCommandExt for std::process::Command {
     fn populate_from_args(&mut self, args: &Args) -> &mut Self {
         self.target(&args.target);
         self.sysroot(args.sysroot_dir());
+        self.entrypoint("entrypoint");
         if let Some(clang) = &args.clang {
             self.cc_env(&args.target, clang);
         } else {

@@ -13,6 +13,7 @@ pub trait CargoCmd {
     fn cc_env(&mut self, triplet: impl AsRef<str>, cc: impl AsRef<Path>) -> &mut Self;
     fn ar_env(&mut self, triplet: impl AsRef<str>, ar: impl AsRef<Path>) -> &mut Self;
     fn sysroot(&mut self, path: impl AsRef<Path>) -> &mut Self;
+    fn entrypoint(&mut self, entry: impl AsRef<str>) -> &mut Self;
     fn append_rustflags(&mut self, flags: impl AsRef<OsStr>) -> &mut Self;
     fn append_cflags(&mut self, triplet: impl AsRef<str>, flags: impl AsRef<OsStr>) -> &mut Self;
     fn append_bindgen_cflags(&mut self, flags: impl AsRef<OsStr>) -> &mut Self;
@@ -100,6 +101,11 @@ impl CargoCmd for Command {
     fn sysroot(&mut self, path: impl AsRef<Path>) -> &mut Self {
         self.append_rustflags("--sysroot")
             .append_rustflags(path.as_ref())
+    }
+
+    fn entrypoint(&mut self, entry: impl AsRef<str>) -> &mut Self {
+        let entry = entry.as_ref();
+        self.append_rustflags(format!("-Clink-args=-e{entry}"))
     }
 
     fn append_rustflags(&mut self, flags: impl AsRef<OsStr>) -> &mut Self {

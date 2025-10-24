@@ -24,7 +24,8 @@ pub fn build(args: &Args) -> Result<()> {
     let target_spec = match args.target.as_str() {
         "x86_64-hyperlight-none" => {
             let mut spec = get_spec(args, "x86_64-unknown-none")?;
-            spec.entry_name = Some("entrypoint".into());
+            // entry_name seems to be ignored, use RUSTFLAGS with -Clink-args=-eentrypoint instead
+            //spec.entry_name = Some("entrypoint".into());
             spec.code_model = Some("small".into());
             spec.linker = Some("rust-lld".into());
             spec.linker_flavor = Some("gnu-lld".into());
