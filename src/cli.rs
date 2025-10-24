@@ -71,8 +71,8 @@ impl WarningLevel for warning::WarningWarn {
         default: T,
     ) -> Result<T, Self::Error> {
         warning(msg);
+        warning(format!("{:?}", err.into()));
         warning(format!("using {default:?}"));
-        println!("{:?}", err.into());
         Ok(default)
     }
 }
