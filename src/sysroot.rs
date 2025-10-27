@@ -33,9 +33,11 @@ pub fn build(args: &Args) -> Result<()> {
                 Some([("gnu-lld".to_string(), vec!["-znostart-stop-gc".to_string()])].into());
             spec
         }
-        triplet => bail!("Unsupported target triple: {triplet:?}
+        triplet => bail!(
+            "Unsupported target triple: {triplet:?}
 Supported values are:
- * x86_64-hyperlight-none"),
+ * x86_64-hyperlight-none"
+        ),
     };
 
     let sysroot_dir = args.sysroot_dir();

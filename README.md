@@ -12,8 +12,11 @@ And there's no need for any extra configuration.
 Your binary, or any of its dependencies, can have a `build.rs` script using `cc` and `bindgen` to compile C code and generate bindings.
 They will work out of the box!
 
-> [!NOTE]  
+> [!NOTE]
 > Your crate **must** have `hyperlight-guest-bin` as a transitive dependency.
+
+> [!WARNING]
+> This is an unofficial tool, not maintained by the hyperlight team.
 
 ## Installation
 
