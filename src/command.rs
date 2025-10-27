@@ -81,7 +81,7 @@ impl Debug for Command {
         }
         write!(f, "{:?} ", self.get_program())?;
         for arg in &self.args {
-            write!(f, "{:?} ", arg)?;
+            write!(f, "{arg:?} ")?;
         }
         writeln!(f)
     }
@@ -521,7 +521,7 @@ impl Command {
         ) {
             Ok(args) => args,
             Err(err) => {
-                eprintln!("Failed to parse arguments: {}", err);
+                eprintln!("Failed to parse arguments: {err}");
                 std::process::exit(1);
             }
         }

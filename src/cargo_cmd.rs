@@ -198,7 +198,7 @@ impl CargoCmd for Command {
         let output = self.output();
 
         let Ok(output) = output else {
-            bail!("Failed to execute command:\n{:?}", self);
+            bail!("Failed to execute command:\n{self:?}");
         };
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
