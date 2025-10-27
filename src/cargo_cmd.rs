@@ -89,6 +89,14 @@ impl CargoCmd for Command {
         // see https://docs.rs/cc/latest/cc/#external-configuration-via-environment-variables
         self.env(format!("CC_{}", triplet.as_ref()), cc.as_ref());
         self.env("CLANG_PATH", cc.as_ref());
+        // In windows, set LIBCLANG_PATH
+        if let Some(parent) = cc.as_ref().parent() {
+            if parent.join("libclang.dll").exists() {
+                self.env("LIBCLANG_PATH", parent.join("libclang.dll"));
+            } else if parent.join("clang.dll").exists() {
+                self.env("LIBCLANG_PATH", parent.join("clang.dll"));
+            }
+        }
         self
     }
 
@@ -163,11 +171,14 @@ impl CargoCmd for Command {
             return self;
         }
 
+        // For some reason we need to escape backslashes on Windows
+        let flags = flags.as_ref().to_string_lossy().replace("\\", "\\\\");
+
         let mut new_flags = get_env(self, "BINDGEN_EXTRA_CLANG_ARGS").unwrap_or_default();
         if !new_flags.is_empty() {
             new_flags.push(" ");
         }
-        new_flags.push(flags.as_ref());
+        new_flags.push(flags);
         self.env("BINDGEN_EXTRA_CLANG_ARGS", new_flags);
         self
     }
