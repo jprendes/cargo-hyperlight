@@ -15,13 +15,10 @@ They will work out of the box!
 > [!NOTE]
 > Your crate **must** have `hyperlight-guest-bin` as a transitive dependency.
 
-> [!WARNING]
-> This is an unofficial tool, not maintained by the hyperlight team.
-
 ## Installation
 
 ```sh
-cargo install cargo-hyperlight --git https://github.com/jprendes/cargo-hyperlight
+cargo install cargo-hyperlight --git https://github.com/hyperlight-dev/cargo-hyperlight
 ```
 
 ## Usage
