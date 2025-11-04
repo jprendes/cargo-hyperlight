@@ -88,9 +88,19 @@ impl CargoCmd for Command {
         // use CC_<triplet> as this is the highest priority for cc-rs
         // see https://docs.rs/cc/latest/cc/#external-configuration-via-environment-variables
         self.env(format!("CC_{}", triplet.as_ref()), cc.as_ref());
+
+        // bindgen uses clang-sys, which looks for clang in the CLANG_PATH env var
+        // see https://github.com/KyleMayes/clang-sys?tab=readme-ov-file#environment-variables
+        // TODO(jprendes): can we make this env var target-specific as well?
         self.env("CLANG_PATH", cc.as_ref());
+
         // In windows, set LIBCLANG_PATH
-        if let Some(parent) = cc.as_ref().parent() {
+        if cfg!(windows) && let Some(parent) = cc.as_ref().parent() {
+            // TODO(jprendes): is this considering all possible situations?
+            // * why is CLANG_PATH not enough on windows?
+            // see https://rust-lang.github.io/rust-bindgen/requirements.html#windows
+            // see https://github.com/KyleMayes/clang-sys?tab=readme-ov-file#environment-variables
+            // TODO(jprendes): can we make this env var target-specific as well?
             if parent.join("libclang.dll").exists() {
                 self.env("LIBCLANG_PATH", parent.join("libclang.dll"));
             } else if parent.join("clang.dll").exists() {
@@ -172,8 +182,11 @@ impl CargoCmd for Command {
         }
 
         // For some reason we need to escape backslashes on Windows
+        // TODO(jprendes): check if we need to do any better escaping for other special characters
         let flags = flags.as_ref().to_string_lossy().replace("\\", "\\\\");
 
+        // TODO(jprendes): account and use the target specific variants of BINDGEN_EXTRA_CLANG_ARGS
+        // see https://github.com/rust-lang/rust-bindgen/tree/main?tab=readme-ov-file#environment-variables
         let mut new_flags = get_env(self, "BINDGEN_EXTRA_CLANG_ARGS").unwrap_or_default();
         if !new_flags.is_empty() {
             new_flags.push(" ");
