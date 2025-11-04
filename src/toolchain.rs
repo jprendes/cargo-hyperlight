@@ -91,6 +91,10 @@ pub fn cflags(args: &Args) -> OsString {
         "-mstack-probe-size=4096",
         "-mno-red-zone",
         "-nostdinc",
+        // Define HYPERLIGHT as we use this to conditionally enable/disable code
+        // in the libc headers
+        "-DHYPERLIGHT=1",
+        "-D__HYPERLIGHT__=1",
     ];
 
     let mut flags = OsString::new();
