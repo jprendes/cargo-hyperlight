@@ -95,7 +95,9 @@ impl CargoCmd for Command {
         self.env("CLANG_PATH", cc.as_ref());
 
         // In windows, set LIBCLANG_PATH
-        if cfg!(windows) && let Some(parent) = cc.as_ref().parent() {
+        if cfg!(windows)
+            && let Some(parent) = cc.as_ref().parent()
+        {
             // TODO(jprendes): is this considering all possible situations?
             // * why is CLANG_PATH not enough on windows?
             // see https://rust-lang.github.io/rust-bindgen/requirements.html#windows
