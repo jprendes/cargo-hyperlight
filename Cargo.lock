@@ -87,7 +87,6 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "target-spec-json",
  "which",
 ]
 
@@ -380,17 +379,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "target-spec-json"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80339d1beb15ac8afe35fe7e4552ccd5e53df8f3349f98ff00a919f4c4e97d77"
-dependencies = [
- "serde",
- "serde_derive",
- "serde_json",
 ]
 
 [[package]]

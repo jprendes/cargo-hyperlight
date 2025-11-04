@@ -2,7 +2,7 @@ use std::ops::Not as _;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail, ensure};
-use target_spec_json::TargetSpec;
+use serde_json::{Map, Value, json};
 
 use crate::cargo_cmd::{CargoCmd, cargo_cmd};
 use crate::cli::Args;
@@ -26,11 +26,17 @@ pub fn build(args: &Args) -> Result<()> {
             let mut spec = get_spec(args, "x86_64-unknown-none")?;
             // entry_name seems to be ignored, use RUSTFLAGS with -Clink-args=-eentrypoint instead
             //spec.entry_name = Some("entrypoint".into());
-            spec.code_model = Some("small".into());
-            spec.linker = Some("rust-lld".into());
-            spec.linker_flavor = Some("gnu-lld".into());
-            spec.pre_link_args =
-                Some([("gnu-lld".to_string(), vec!["-znostart-stop-gc".to_string()])].into());
+            let Value::Object(custom) = json!({
+                "code-model": "small",
+                "linker": "rust-lld",
+                "linker-flavor": "gnu-lld",
+                "pre-link-args": {
+                    "gnu-lld": ["-znostart-stop-gc"],
+                },
+            }) else {
+                unreachable!()
+            };
+            spec.extend(custom);
             spec
         }
         triplet => bail!(
@@ -199,7 +205,7 @@ Supported values are:
     Ok(())
 }
 
-fn get_spec(args: &Args, triplet: impl AsRef<str>) -> Result<TargetSpec> {
+fn get_spec(args: &Args, triplet: impl AsRef<str>) -> Result<Map<String, Value>> {
     let output = cargo_cmd()?
         .env_clear()
         .envs(args.env.iter())
