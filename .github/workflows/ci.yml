@@ -31,7 +31,7 @@ jobs:
         cargo hyperlight build --manifest-path demo/guest/Cargo.toml
     - name: Run demo
       shell: bash
-      run: cargo run --manifest-path demo/host/Cargo.toml -- src/guest/target/x86_64-hyperlight-none/debug/guest
+      run: cargo run --manifest-path demo/host/Cargo.toml -- demo/guest/target/x86_64-hyperlight-none/debug/guest
 
   spelling:
     name: Spell check with typos
