@@ -6,10 +6,13 @@ extern crate alloc;
 use alloc::format;
 use alloc::vec::Vec;
 
+use hyperlight_common::flatbuffer_wrappers::function_call::*;
+use hyperlight_common::flatbuffer_wrappers::function_types::*;
 use hyperlight_common::flatbuffer_wrappers::guest_error::ErrorCode;
-use hyperlight_common::flatbuffer_wrappers::{function_call::*, function_types::*, util::*};
+use hyperlight_common::flatbuffer_wrappers::util::*;
 use hyperlight_guest::error::{HyperlightGuestError, Result};
-use hyperlight_guest_bin::guest_function::{definition::*, register::*};
+use hyperlight_guest_bin::guest_function::definition::*;
+use hyperlight_guest_bin::guest_function::register::*;
 
 mod ffi {
     #![allow(dead_code, non_camel_case_types)] // generated code
@@ -23,7 +26,7 @@ fn host_print(s: impl AsRef<[u8]>) -> i32 {
 
 pub fn say_hello(func: &FunctionCall) -> Result<Vec<u8>> {
     let params = func.parameters.as_deref().unwrap_or_default();
-    let Some(ParameterValue::String(name)) = params.get(0) else {
+    let Some(ParameterValue::String(name)) = params.first() else {
         return Err(HyperlightGuestError::new(
             ErrorCode::GuestError,
             "Expected a string parameter".into(),
