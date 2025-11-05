@@ -58,9 +58,13 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt, clippy
+      - uses: extractions/setup-just@v3
       - name: Setup nightly toolchain
         shell: bash
         run: rustup toolchain install nightly --component rustfmt # needed to run rustfmt in nightly toolchain
+      - name: Install cargo-hyperlight
+        shell: bash
+        run: just install
       - name: Check formatting
         shell: bash
         run: just fmt
