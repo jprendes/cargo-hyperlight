@@ -2,13 +2,13 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::env;
 use std::env::consts::ARCH;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fmt::Debug;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
 use const_format::formatcp;
+use os_str_bytes::OsStrBytesExt as _;
 
 use crate::cargo_cmd::{CargoCmd as _, cargo_cmd};
 use crate::toolchain;
@@ -96,7 +96,7 @@ impl Args {
         cwd: Option<impl Into<PathBuf>>,
         warn: W,
     ) -> Result<Args, W::Error> {
-        let mut args = ArgsImpl::parse_from(args);
+        let mut args = ArgsImpl::parse_args(args);
         args.env = env.into_iter().map(|(k, v)| (k.into(), v.into())).collect();
         let cwd = match cwd {
             Some(cwd) => cwd.into(),
@@ -184,40 +184,62 @@ impl Args {
 
 const DEFAULT_TARGET: &str = const { formatcp!("{ARCH}-hyperlight-none") };
 
-#[derive(Parser)]
-#[command(disable_help_subcommand = true)]
+#[derive(Default)]
+//#[command(disable_help_subcommand = true)]
 struct ArgsImpl {
     /// Path to Cargo.toml
-    #[arg(long, value_name = "PATH")]
     manifest_path: Option<PathBuf>,
 
     /// Directory for all generated artifacts
-    #[arg(long, value_name = "DIRECTORY")]
     target_dir: Option<PathBuf>,
 
     /// Target triple to build for
-    #[arg(long, value_name = "TRIPLE")]
     target: Option<String>,
 
-    /// Arguments to pass to cargo
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-    cargo_args: Vec<OsString>,
-
-    #[arg(skip)]
+    /// Environment variables to set
     env: HashMap<OsString, OsString>,
 
-    #[arg(skip)]
+    /// Current working directory
     pub current_dir: PathBuf,
 }
 
-#[derive(Subcommand)]
-enum BuildCommands {
-    /// does testing things
-    Test {
-        /// lists test values
-        #[arg(short, long)]
-        list: bool,
-    },
+fn parse_arg(
+    flag: &str,
+    arg: &OsStr,
+    args: &mut impl Iterator<Item = OsString>,
+) -> Option<OsString> {
+    let value = arg.strip_prefix(flag)?;
+    if value.is_empty() {
+        args.next()
+    } else {
+        value.strip_prefix("=").map(OsStr::to_os_string)
+    }
+}
+
+impl ArgsImpl {
+    pub fn parse_args(args: impl IntoIterator<Item = impl Into<OsString> + Clone>) -> Self {
+        let mut this = Self::default();
+        let mut args = args.into_iter().map(Into::into);
+
+        while let Some(arg) = args.next() {
+            if arg == "--" {
+                break;
+            }
+            if let Some(path) = parse_arg("--manifest-path", &arg, &mut args) {
+                this.manifest_path = Some(PathBuf::from(path));
+                continue;
+            }
+            if let Some(dir) = parse_arg("--target-dir", &arg, &mut args) {
+                this.target_dir = Some(PathBuf::from(dir));
+                continue;
+            }
+            if let Some(triplet) = parse_arg("--target", &arg, &mut args) {
+                this.target = Some(triplet.to_string_lossy().to_string());
+                continue;
+            }
+        }
+        this
+    }
 }
 
 #[derive(serde::Deserialize)]
