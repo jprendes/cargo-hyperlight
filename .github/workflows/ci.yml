@@ -31,13 +31,13 @@ jobs:
     - name: Install cargo-hyperlight
       shell: bash
       run: cargo install cargo-hyperlight --path .
-    - name: Build guest demo
+    - name: Build guest example
       shell: bash
       run: |
-        cargo hyperlight build --manifest-path demo/guest/Cargo.toml
-    - name: Run demo
+        cargo hyperlight build --manifest-path examples/guest/Cargo.toml
+    - name: Run example
       shell: bash
-      run: cargo run --manifest-path demo/host/Cargo.toml -- demo/guest/target/x86_64-hyperlight-none/debug/guest
+      run: cargo run --manifest-path examples/host/Cargo.toml -- examples/guest/target/x86_64-hyperlight-none/debug/guest
 
   spelling:
     name: Spell check with typos

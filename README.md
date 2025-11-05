@@ -18,7 +18,7 @@ They will work out of the box!
 ## Installation
 
 ```sh
-cargo install cargo-hyperlight --git https://github.com/hyperlight-dev/cargo-hyperlight
+cargo install cargo-hyperlight
 ```
 
 ## Usage
@@ -33,9 +33,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-hyperlight-common = { version = "0.9.0", default-features = false }
-hyperlight-guest = "0.9.0"
-hyperlight-guest-bin = "0.9.0"
+hyperlight-common = { version = "0.11.0", default-features = false }
+hyperlight-guest = "0.11.0"
+hyperlight-guest-bin = "0.11.0"
 ```
 
 The in your `src/main.rs`
